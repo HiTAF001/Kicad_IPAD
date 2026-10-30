@@ -181,6 +181,14 @@ std::string_view SReader::OpenRoot()
 
     skipSpace();
 
+    if( m_p < m_end && *m_p == '{' )
+        throw ParseError( "Bu bir proje dosyası (.kicad_pro). Lütfen aynı klasördeki .kicad_pcb "
+                          "dosyasını seç.", 0 );
+
+    if( m_end - m_p >= 4 && std::string_view( m_p, 4 ) == "PK\x03\x04" )
+        throw ParseError( "Bu bir ZIP arşivi. Önce Dosyalar uygulamasında açıp içindeki .kicad_pcb "
+                          "dosyasını seç.", 0 );
+
     if( m_p >= m_end || *m_p != '(' )
         fail( "Dosya bir KiCad S-ifadesiyle başlamıyor" );
 

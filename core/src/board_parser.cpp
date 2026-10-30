@@ -609,6 +609,10 @@ void BoardParser::Parse( const char* aData, size_t aLen )
         if( root == "footprint" || root == "module" )
             throw ParseError( "Bu bir footprint dosyası (.kicad_mod), kart dosyası değil", 0 );
 
+        if( root == "kicad_sch" || root == "kicad_symbol_lib" )
+            throw ParseError( "Bu bir şema/sembol dosyası. KiPad şimdilik yalnızca kart "
+                              "(.kicad_pcb) dosyalarını açıyor.", 0 );
+
         throw ParseError( "Bu bir KiCad kart dosyası değil (kök: '" + std::string( root ) + "')", 0 );
     }
 

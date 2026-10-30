@@ -1016,10 +1016,9 @@ void Builder::Build()
 
     m_acc.clear();
 
-    m_mesh.bounds = m_board.OutlineBBox();
-
-    if( !m_mesh.bounds.valid() )
-        m_mesh.bounds = m_board.ContentBBox();
+    // "Zoom to fit" shows everything, like KiCad (labels often sit outside the outline)
+    m_mesh.bounds = m_board.ContentBBox();
+    m_mesh.bounds.add( m_board.OutlineBBox() );
 
     if( !m_mesh.bounds.valid() )
     {

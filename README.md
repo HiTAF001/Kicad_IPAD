@@ -7,6 +7,12 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 > kaydırma, yakınlaştırma, katman ve nesne gizleme, alttan görünüm ve kart bilgisi var.
 > Düzenleme (taşıma, pist çizme, DRC) henüz yok.
 
+| Üstten | Alttan görünüm | Katman paneli |
+|---|---|---|
+| ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/2-pic-front.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/3-pic-back.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/4-ecc83-layers.png) |
+
+*Ekran görüntüleri her derlemede CI tarafından iPad simülatöründe çekilir (`ci-screenshots` dalı).*
+
 ## Özellikler
 
 - KiCad 4 – 10 (ve 11 geliştirme sürümü) kart dosyaları: pistler, yay pistler, via'lar
