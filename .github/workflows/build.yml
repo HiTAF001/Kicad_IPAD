@@ -1,0 +1,120 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core (Linux tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build core and test tool
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Load sample boards
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Render previews
+        run: |
+          mkdir -p previews
+          for f in samples/*.kicad_pcb; do
+            n=$(basename "$f" .kicad_pcb)
+            ./build/kpcli stats "$f" | head -8
+            ./build/kpcli render "$f" "previews/$n.png" 1600
+            ./build/kpcli render "$f" "previews/$n-back.png" 1600 --back
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: previews
+          path: previews/*.png
+
+  ios:
+    name: iPad app (unsigned IPA)
+    runs-on: macos-15
+    needs: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          ls -d /Applications/Xcode*.app
+
+      - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, iphoneos)
+        run: |
+          set +e
+          xcodebuild \
+            -project KiPad.xcodeproj \
+            -target KiPad \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1
+          status=$?
+          echo "xcodebuild exit status: $status"
+          grep -E "(error|warning): " build.log | grep -v "/samples/" | sort -u | head -150
+          if [ $status -ne 0 ]; then
+            # surface errors as annotations so they are visible on the run page
+            grep -E "error: " build.log | sort -u | head -40 | while IFS= read -r line; do
+              line="${line//'%'/'%25'}"
+              echo "::error title=xcodebuild::${line}"
+            done
+            echo "----- last 80 lines -----"
+            tail -80 build.log
+            exit $status
+          fi
+
+      - name: Package IPA
+        run: |
+          APP="build/Release-iphoneos/KiPad.app"
+          test -d "$APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry KiPad.ipa Payload
+          ls -lh KiPad.ipa
+          /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$APP/Info.plist"
+          lipo -info "$APP/KiPad"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KiPad-ipa
+          path: KiPad.ipa
+
+      - name: Publish "latest" pre-release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest KiPad.ipa \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "KiPad (son derleme)" \
+            --notes "İmzasız iPad derlemesi, commit ${GITHUB_SHA::7}. Kurulum için README'ye bak (Sideloadly / AltStore)."

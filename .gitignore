@@ -1,0 +1,10 @@
+# Xcode (project is generated from project.yml by XcodeGen)
+KiPad.xcodeproj/
+build/
+DerivedData/
+Payload/
+*.ipa
+xcuserdata/
+.DS_Store
+# desktop build of the core
+/build-*/
