@@ -80,6 +80,12 @@ jobs:
           status=$?
           echo "xcodebuild exit status: $status"
           grep -E "(error|warning): " build.log | grep -v "/samples/" | sort -u | head -150
+          # one notice with all compiler warnings (readable through the checks API)
+          grep -E "warning: " build.log | sed "s#$PWD/##" | sort -u > warnings.txt || true
+          if [ -s warnings.txt ]; then
+            msg=$(head -c 3800 warnings.txt | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=Compiler warnings ($(wc -l < warnings.txt | tr -d ' '))::${msg}"
+          fi
           if [ $status -ne 0 ]; then
             # surface errors as annotations so they are visible on the run page
             grep -E "error: " build.log | sort -u | head -40 | while IFS= read -r line; do
@@ -118,3 +124,77 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "KiPad (son derleme)" \
             --notes "İmzasız iPad derlemesi, commit ${GITHUB_SHA::7}. Kurulum için README'ye bak (Sideloadly / AltStore)."
+
+  screenshots:
+    name: iPad simulator screenshots
+    runs-on: macos-15
+    needs: core
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install xcodegen
+
+      - name: Build for simulator
+        run: |
+          xcodegen generate
+          set +e
+          xcodebuild -project KiPad.xcodeproj -target KiPad -configuration Debug \
+            -sdk iphonesimulator SYMROOT="$PWD/build-sim" CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            grep -E "error: " sim.log | sort -u | head -30 | while IFS= read -r line; do
+              echo "::error title=simulator build::${line//'%'/'%25'}"
+            done
+            tail -60 sim.log
+            exit $status
+          fi
+
+      - name: Run in iPad simulator and take screenshots
+        run: |
+          set -x
+          APP="build-sim/Debug-iphonesimulator/KiPad.app"
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          ipads = [x for rt, devs in d.items() if "iOS" in rt for x in devs if x["name"].startswith("iPad")]
+          pro = [x for x in ipads if x["name"].startswith("iPad Pro")]
+          print((pro or ipads)[-1]["udid"])')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p shots
+          shoot() {
+            name=$1; shift
+            xcrun simctl terminate "$UDID" com.hitaf001.kipad 2>/dev/null || true
+            xcrun simctl launch "$UDID" com.hitaf001.kipad "$@"
+            sleep 12
+            xcrun simctl io "$UDID" screenshot "shots/$name.png"
+          }
+          shoot 1-welcome
+          shoot 2-pic-front -KiPadOpenSample pic_programmer
+          shoot 3-pic-back -KiPadOpenSample pic_programmer -KiPadFlip YES
+          shoot 4-ecc83-layers -KiPadOpenSample ecc83-pp -KiPadPanel layers
+          shoot 5-pic-info -KiPadOpenSample pic_programmer -KiPadPanel info
+          xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "KiPad"' --style compact > shots/app-log.txt 2>&1 || true
+          ls -la shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: shots/
+
+      - name: Push screenshots to the ci-screenshots branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd shots
+          git init -q
+          git config user.name "github-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Simulator screenshots for ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:ci-screenshots

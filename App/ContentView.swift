@@ -55,6 +55,22 @@ struct ContentView: View {
             .sheet(isPresented: $showHelp) {
                 HelpView()
             }
+            .task {
+                store.handleLaunchArguments()
+            }
+            .onChange(of: store.autoPanel) { panel in
+                guard let panel else { return }
+                store.autoPanel = nil
+
+                // let the first frame render before presenting
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    if panel == "info" {
+                        showInfo = true
+                    } else if panel == "layers" {
+                        showLayers = true
+                    }
+                }
+            }
             .alert("Dosya açılamadı",
                    isPresented: Binding(get: { store.errorMessage != nil },
                                         set: { if !$0 { store.errorMessage = nil } })) {

@@ -27,10 +27,32 @@ final class BoardStore: ObservableObject {
     @Published private(set) var fitToken = 0
     @Published var cursorText: String?
 
+    /// Set from launch arguments (used by the CI screenshot job).
+    @Published var autoPanel: String?
+
     let samples = [
         SampleBoard(id: "pic_programmer", title: "PIC programlayıcı (2 katman)"),
         SampleBoard(id: "ecc83-pp", title: "ECC83 tüp amfi (2 katman)")
     ]
+
+    private var launchHandled = false
+    private var pendingFlip = false
+    private var pendingPanel: String?
+
+    /// Launch arguments: -KiPadOpenSample <id>  -KiPadFlip YES  -KiPadPanel info|layers
+    func handleLaunchArguments() {
+        guard !launchHandled else { return }
+
+        launchHandled = true
+        let defaults = UserDefaults.standard
+
+        if let id = defaults.string(forKey: "KiPadOpenSample"),
+           let sample = samples.first(where: { $0.id == id }) {
+            pendingFlip = defaults.bool(forKey: "KiPadFlip")
+            pendingPanel = defaults.string(forKey: "KiPadPanel")
+            openSample(sample)
+        }
+    }
 
     // MARK: - Opening
 
@@ -81,9 +103,15 @@ final class BoardStore: ObservableObject {
             board = loaded
             visibleSlots = Set(loaded.slots.filter { $0.defaultVisible }.map { $0.id })
             hiddenKinds = []
-            flipped = false
+            flipped = pendingFlip
+            pendingFlip = false
             cursorText = nil
             fitToken += 1
+
+            if let panel = pendingPanel {
+                pendingPanel = nil
+                autoPanel = panel
+            }
 
         case .failure(let error):
             errorMessage = error.localizedDescription
