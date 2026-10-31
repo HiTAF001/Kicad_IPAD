@@ -3,13 +3,15 @@
 KiPad, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan, yerel (native) bir uygulamadır.
 Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşınabilir C++17 ile yazıldı.
 
-> Durum: **Faz 1 + 2: görüntüleyici.** Kartı açar, KiCad renkleri ve yazı tipiyle çizer;
-> kaydırma, yakınlaştırma, katman ve nesne gizleme, alttan görünüm ve kart bilgisi var.
+> Durum: **Faz 1–3: görüntüleyici + inceleme araçları.** Kartı açar, KiCad renkleri ve yazı
+> tipiyle çizer; öğe seçme ve bilgi kartı, net vurgulama, arama, ölçüm ve pad/net etiketleri var.
 > Düzenleme (taşıma, pist çizme, DRC) henüz yok.
 
 | Üstten | Alttan görünüm | Katman paneli |
 |---|---|---|
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/2-pic-front.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/3-pic-back.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/4-ecc83-layers.png) |
+| **Footprint seçimi** | **Net vurgulama** | **Pad / net etiketleri** |
+| ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/6-select-footprint.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/7-net-highlight.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/9-labels.png) |
 
 *Ekran görüntüleri her derlemede CI tarafından iPad simülatöründe çekilir (`ci-screenshots` dalı).*
 
@@ -24,7 +26,16 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 - Büyük kartlar: 85 MB'lık `jetson-agx-thor-baseboard` demosu (15 milyon üçgen) açılıyor.
 - Katman paneli: katmanları ve nesne türlerini (pist, via, pad, bölge, çizim, yazı, delik) tek tek
   açıp kapatma, "sadece bakır", "sadece ön/arka yüz", alttan görünüm.
-- Tek dokunuşta koordinat okuma (mm), kart bilgisi ekranı (ölçüler, eleman sayıları, KiCad sürümü).
+- **Seçim ve bilgi kartı:** pad, via, pist, footprint, bakır bölge, çizim veya yazıya dokun;
+  net, boyut, delik, katman, footprint, pin işlevi, pist uzunluğu gibi bilgileri gösterir.
+  Aynı yere tekrar dokunmak üst üste binen öğeler arasında geçer.
+- **Net vurgulama:** seçili öğenin netindeki her şey parlar, gerisi kararır; netin pad/via/pist
+  sayısı, toplam pist uzunluğu ve bağlı elemanlar listelenir.
+- **Arama:** footprint (R12, U3, 10k) veya net (GND, SDA) bul, oraya git ve vurgula.
+- **Ölçüm:** iki noktaya dokun → mesafe, ΔX, ΔY, açı; pad ve via merkezlerine tutunur.
+- **Pad numarası ve net adları:** yakınlaştıkça pad'lerin üzerinde numara ve net adı, pistlerin
+  üzerinde net adı belirir (KiCad'deki gibi); alttan görünümde de okunur.
+- Kart bilgisi ekranı (ölçüler, eleman sayıları, KiCad sürümü).
 - Uygulamanın içinde iki örnek kart (KiCad demolarından).
 
 ## iPad'e kurulum (Mac gerekmez)
@@ -60,7 +71,8 @@ AltStore → My Apps → **+** ile seç.
 | İki parmakla sıkıştır | Yakınlaştır / uzaklaştır |
 | Çift dokun | Dokunulan yere 2× yakınlaş |
 | İki parmakla tek dokun | Ekrana sığdır |
-| Tek dokun | O noktanın koordinatını (mm) göster |
+| Tek dokun | Öğeyi seç ve bilgisini göster (ölçüm modunda: ölçüm noktası) |
+| Aynı yere tekrar dokun | Alttaki öğeye geç |
 | Trackpad / Magic Keyboard | Kaydırma ve sıkıştırma çalışır |
 
 Dosyayı **Aç** düğmesiyle (Dosyalar, iCloud Drive, OneDrive, AirDrop ile gelenler) seçebilir ya da
@@ -73,7 +85,9 @@ core/            Taşınabilir C++17 çekirdek (iOS, Linux, Windows, macOS'ta de
   src/sexpr.*        S-ifadesi okuyucu (akış halinde, yerel ayardan bağımsız sayı okuma)
   src/board_parser.* .kicad_pcb → kart modeli (KiCad 4 … 11 dosya biçimleri)
   src/stroke_font.*  KiCad stroke yazı tipi ve metin yerleşimi
-  src/mesh.*         Kart → katman/nesne gruplarına ayrılmış üçgen ağları (earcut, paralel)
+  src/mesh.*         Kart → katman/nesne gruplarına ayrılmış üçgen ağları (earcut, paralel),
+                     öğe başına üçgen aralıkları (vurgulama), pad/net etiketleri
+  src/pick.*         Seçim (hit-test), öğe/net açıklamaları, ölçüm için tutunma
   include/kpcore.h   Swift'in kullandığı düz C arayüzü
 App/             SwiftUI arayüz + Metal çizici
 tools/kpcli.cpp  Masaüstü test aracı: istatistik, PNG çıktı (Metal çiziciyi taklit eder)
@@ -93,6 +107,8 @@ cmake --build build
 ./build/kpcli stats samples/pic_programmer.kicad_pcb
 ./build/kpcli render samples/pic_programmer.kicad_pcb out.png 1600          # üstten
 ./build/kpcli render samples/pic_programmer.kicad_pcb out-back.png 1600 --back
+./build/kpcli pick samples/pic_programmer.kicad_pcb 110.49 78.867            # o noktada ne var
+./build/kpcli render samples/pic_programmer.kicad_pcb net.png 1600 --pick 110.49 78.867 --net
 ctest --test-dir build
 ```
 
@@ -110,7 +126,7 @@ open KiPad.xcodeproj
 
 ## Yol haritası
 
-- Faz 3: eleman seçme ve bilgi (footprint, pad, net vurgulama), ölçüm aracı, pad/net adları
+- ~~Faz 3: eleman seçme ve bilgi, net vurgulama, arama, ölçüm aracı, pad/net adları~~ ✓
 - Faz 4: düzenleme ve kaydetme (taşıma, döndürme, özellik değiştirme)
 - Faz 5: pist çizme ve DRC, dokunmatik için yeniden tasarlanmış
 
