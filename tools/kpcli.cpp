@@ -8,11 +8,18 @@
  *
  * Desktop test tool for the core. It uses only the public C API (the same one the iPad app
  * uses) and contains a small software rasteriser that mimics the Metal renderer (per-slot
- * stencil, straight alpha blending), so the output PNG shows what the app will draw.
+ * stencil, straight alpha blending, label zoom thresholds, highlight dimming), so the output
+ * PNG shows what the app will draw.
  *
- *   kpcli stats  <board.kicad_pcb>
- *   kpcli render <board.kicad_pcb> <out.png> [width] [--back]
- *   kpcli check  <board.kicad_pcb>...      (exit code != 0 if any board fails to load)
+ *   kpcli stats  <board>
+ *   kpcli check  <board>...                 (exit code != 0 if any board fails to load)
+ *   kpcli pick   <board> <x> <y> [tol]      (items under a point, with their descriptions)
+ *   kpcli render <board> <out.png> [width] [options]
+ *        --back                 view from the bottom side
+ *        --view x0 y0 x1 y1     render only this window (mm)
+ *        --pick x y             select the item at (x, y) and highlight it
+ *        --net                  with --pick: highlight the item's whole net
+ *        --no-labels            hide pad/net labels
  */
 #include "kpcore.h"
 
@@ -22,10 +29,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
-#include <numeric>
 #include <string>
 #include <vector>
 
@@ -92,9 +99,9 @@ static int cmdStats( const char* aPath )
     {
         kp_slot_info si;
         kp_board_slot_info( b, i, &si );
-        printf( "  %2d %-10s %-16s kind=%d side=%+d front=%d back=%d idx=%u\n", i,
+        printf( "  %2d %-16s %-22s kind=%d side=%+d front=%d back=%d idx=%u parent=%d view=%+d\n", i,
                 kp_board_slot_name( b, i ), kp_board_slot_display( b, i ), si.kind, si.side,
-                si.sort_front, si.sort_back, si.index_count );
+                si.sort_front, si.sort_back, si.index_count, si.parent_slot, si.view_side );
     }
 
     kp_board_free( b );
@@ -102,84 +109,68 @@ static int cmdStats( const char* aPath )
 }
 
 
-static int cmdRender( const char* aPath, const char* aOut, int aWidth, bool aBack )
+static void printItem( kp_board* b, const kp_item& it )
+{
+    static const char* names[] = { "none", "pad", "via", "track", "arc", "footprint", "zone", "shape", "text" };
+    printf( "-- %s #%d (net %d, fp %d, layer %d)\n", names[it.type], it.index, it.net, it.footprint, it.layer );
+    printf( "%s\n", kp_board_item_info( b, &it ) );
+}
+
+
+static int cmdPick( const char* aPath, double x, double y, double tol )
 {
     kp_board* b = load( aPath );
 
     if( !b )
         return 1;
 
-    double x0, y0, x1, y1;
-    kp_board_bounds( b, &x0, &y0, &x1, &y1 );
-    double mw = ( x1 - x0 ) * 0.03 + 0.5, mh = ( y1 - y0 ) * 0.03 + 0.5;
-    x0 -= mw;
-    x1 += mw;
-    y0 -= mh;
-    y1 += mh;
+    kp_item items[16];
+    int     n = kp_board_pick( b, x, y, tol, nullptr, 0, 0, 0, items, 16 );
+    printf( "%d item(s) at (%.3f, %.3f)\n", n, x, y );
 
-    const int SS = 2;
-    int       W = aWidth;
-    int       H = std::max( 16, (int) std::lround( aWidth * ( y1 - y0 ) / ( x1 - x0 ) ) );
-    int       w = W * SS, h = H * SS;
-    double    scale = w / ( x1 - x0 );
+    for( int i = 0; i < n; ++i )
+        printItem( b, items[i] );
 
-    std::vector<float>   color( (size_t) w * h * 3 );
-    std::vector<uint8_t> stencil( (size_t) w * h, 0 );
-
-    for( size_t i = 0; i < (size_t) w * h; ++i )
+    if( n > 0 && items[0].net > 0 )
     {
-        color[i * 3 + 0] = 0.0f;
-        color[i * 3 + 1] = 16 / 255.0f;
-        color[i * 3 + 2] = 35 / 255.0f;
+        printf( "-- net\n%s\n", kp_board_net_info( b, items[0].net ) );
+        int r1 = kp_board_item_ranges( b, &items[0], 0, nullptr, 0 );
+        int r2 = kp_board_item_ranges( b, &items[0], 1, nullptr, 0 );
+        printf( "highlight ranges: item=%d net=%d\n", r1, r2 );
     }
 
-    size_t          nv = 0, ni = 0;
-    const float*    V = kp_board_vertices( b, &nv );
-    const uint32_t* I = kp_board_indices( b, &ni );
+    kp_board_free( b );
+    return 0;
+}
 
-    int nslots = kp_board_slot_count( b );
-    std::vector<kp_slot_info> slots( (size_t) nslots );
 
-    for( int i = 0; i < nslots; ++i )
-        kp_board_slot_info( b, i, &slots[(size_t) i] );
+struct Raster
+{
+    int                  w, h;
+    double               x0, y0, scale; // world -> pixel
+    bool                 back;
+    double               mirrorX;       // world x mirror axis for bottom view
+    std::vector<float>   color;
+    std::vector<uint8_t> stencil;
 
-    int ng = kp_board_group_count( b );
-    std::vector<kp_group> groups( (size_t) ng );
-
-    for( int i = 0; i < ng; ++i )
-        kp_board_group( b, i, &groups[(size_t) i] );
-
-    std::stable_sort( groups.begin(), groups.end(),
-                      [&]( const kp_group& a, const kp_group& c )
-                      {
-                          const kp_slot_info& sa = slots[(size_t) a.slot];
-                          const kp_slot_info& sc = slots[(size_t) c.slot];
-                          return ( aBack ? sa.sort_back : sa.sort_front )
-                                 < ( aBack ? sc.sort_back : sc.sort_front );
-                      } );
-
-    auto toPx = [&]( uint32_t idx, double& px, double& py )
+    void toPx( double x, double y, double& px, double& py ) const
     {
-        double x = V[idx * 2], y = V[idx * 2 + 1];
-
-        if( aBack )
-            x = x1 - ( x - x0 );
+        if( back )
+            x = mirrorX - x;
 
         px = ( x - x0 ) * scale;
         py = ( y - y0 ) * scale;
-    };
+    }
 
-    for( const kp_group& g : groups )
+    void fill( const float* V, const uint32_t* I, uint32_t start, uint32_t count, uint8_t ref, float r,
+               float g, float bl, float a )
     {
-        uint8_t ref = (uint8_t) ( g.slot % 255 + 1 );
-        float   a = g.a;
-
-        for( uint32_t t = g.index_start; t + 2 < g.index_start + g.index_count; t += 3 )
+        for( uint32_t t = start; t + 2 < start + count + 0; t += 3 )
         {
             double ax, ay, bx, by, cx, cy;
-            toPx( I[t], ax, ay );
-            toPx( I[t + 1], bx, by );
-            toPx( I[t + 2], cx, cy );
+            toPx( V[I[t] * 2], V[I[t] * 2 + 1], ax, ay );
+            toPx( V[I[t + 1] * 2], V[I[t + 1] * 2 + 1], bx, by );
+            toPx( V[I[t + 2] * 2], V[I[t + 2] * 2 + 1], cx, cy );
 
             double area = ( bx - ax ) * ( cy - ay ) - ( by - ay ) * ( cx - ax );
 
@@ -215,11 +206,185 @@ static int cmdRender( const char* aPath, const char* aOut, int aWidth, bool aBac
 
                     stencil[p] = ref;
                     float* c = &color[p * 3];
-                    c[0] = g.r * a + c[0] * ( 1 - a );
-                    c[1] = g.g * a + c[1] * ( 1 - a );
-                    c[2] = g.b * a + c[2] * ( 1 - a );
+                    c[0] = r * a + c[0] * ( 1 - a );
+                    c[1] = g * a + c[1] * ( 1 - a );
+                    c[2] = bl * a + c[2] * ( 1 - a );
                 }
             }
+        }
+    }
+};
+
+
+static int cmdRender( int argc, char** argv )
+{
+    const char* path = argv[0];
+    const char* outPath = argv[1];
+    int         width = 1600;
+    bool        back = false, haveView = false, havePick = false, wholeNet = false, labels = true;
+    double      vx0 = 0, vy0 = 0, vx1 = 0, vy1 = 0, pickX = 0, pickY = 0;
+
+    for( int i = 2; i < argc; ++i )
+    {
+        std::string a = argv[i];
+
+        if( a == "--back" )
+            back = true;
+        else if( a == "--net" )
+            wholeNet = true;
+        else if( a == "--no-labels" )
+            labels = false;
+        else if( a == "--view" && i + 4 < argc )
+        {
+            haveView = true;
+            vx0 = atof( argv[++i] );
+            vy0 = atof( argv[++i] );
+            vx1 = atof( argv[++i] );
+            vy1 = atof( argv[++i] );
+        }
+        else if( a == "--pick" && i + 2 < argc )
+        {
+            havePick = true;
+            pickX = atof( argv[++i] );
+            pickY = atof( argv[++i] );
+        }
+        else
+            width = atoi( argv[i] );
+    }
+
+    kp_board* b = load( path );
+
+    if( !b )
+        return 1;
+
+    double bx0, by0, bx1, by1;
+    kp_board_bounds( b, &bx0, &by0, &bx1, &by1 );
+    double x0 = bx0, y0 = by0, x1 = bx1, y1 = by1;
+
+    if( haveView )
+    {
+        x0 = std::min( vx0, vx1 );
+        x1 = std::max( vx0, vx1 );
+        y0 = std::min( vy0, vy1 );
+        y1 = std::max( vy0, vy1 );
+    }
+    else
+    {
+        double mw = ( x1 - x0 ) * 0.03 + 0.5, mh = ( y1 - y0 ) * 0.03 + 0.5;
+        x0 -= mw;
+        x1 += mw;
+        y0 -= mh;
+        y1 += mh;
+    }
+
+    const int SS = 2;
+    int       W = width;
+    int       H = std::max( 16, (int) std::lround( width * ( y1 - y0 ) / ( x1 - x0 ) ) );
+
+    Raster R;
+    R.w = W * SS;
+    R.h = H * SS;
+    R.scale = R.w / ( x1 - x0 );
+    R.back = back;
+    R.mirrorX = x0 + x1; // mirror the view window onto itself
+    R.x0 = x0;
+    R.y0 = y0;
+    R.color.resize( (size_t) R.w * R.h * 3 );
+    R.stencil.assign( (size_t) R.w * R.h, 0 );
+
+    for( size_t i = 0; i < (size_t) R.w * R.h; ++i )
+    {
+        R.color[i * 3 + 0] = 0.0f;
+        R.color[i * 3 + 1] = 16 / 255.0f;
+        R.color[i * 3 + 2] = 35 / 255.0f;
+    }
+
+    double zoom = W / ( x1 - x0 ); // output pixels per mm (what the app calls zoom)
+
+    size_t          nv = 0, ni = 0;
+    const float*    V = kp_board_vertices( b, &nv );
+    const uint32_t* I = kp_board_indices( b, &ni );
+
+    int                       nslots = kp_board_slot_count( b );
+    std::vector<kp_slot_info> slots( (size_t) nslots );
+
+    for( int i = 0; i < nslots; ++i )
+        kp_board_slot_info( b, i, &slots[(size_t) i] );
+
+    int                   ng = kp_board_group_count( b );
+    std::vector<kp_group> groups( (size_t) ng );
+
+    for( int i = 0; i < ng; ++i )
+        kp_board_group( b, i, &groups[(size_t) i] );
+
+    auto sortKey = [&]( int slot )
+    { return back ? slots[(size_t) slot].sort_back : slots[(size_t) slot].sort_front; };
+
+    std::stable_sort( groups.begin(), groups.end(),
+                      [&]( const kp_group& a, const kp_group& c ) { return sortKey( a.slot ) < sortKey( c.slot ); } );
+
+    auto slotShown = [&]( int slot ) -> bool
+    {
+        const kp_slot_info& s = slots[(size_t) slot];
+
+        if( s.view_side != 0 && s.view_side != ( back ? -1 : 1 ) )
+            return false;
+
+        return true;
+    };
+
+    int drawnGroups = 0;
+
+    for( const kp_group& g : groups )
+    {
+        bool isLabel = g.kind >= KP_KIND_LABEL0 && g.kind <= KP_KIND_LABEL4;
+
+        if( !slotShown( g.slot ) || ( isLabel && ( !labels || zoom < g.min_zoom ) ) )
+            continue;
+
+        R.fill( V, I, g.index_start, g.index_count, (uint8_t) ( g.slot % 255 + 1 ), g.r, g.g, g.b, g.a );
+        ++drawnGroups;
+    }
+
+    if( havePick )
+    {
+        kp_item items[8];
+        int     n = kp_board_pick( b, pickX, pickY, 0.2, nullptr, 0, 0, back, items, 8 );
+
+        if( n > 0 )
+        {
+            printf( "selected: %s\n", kp_board_item_info( b, &items[0] ) );
+
+            // dim everything (and reset the stencil, like the full-screen quad in the app)
+            for( size_t i = 0; i < (size_t) R.w * R.h; ++i )
+            {
+                R.color[i * 3 + 0] = R.color[i * 3 + 0] * 0.35f;
+                R.color[i * 3 + 1] = R.color[i * 3 + 1] * 0.35f + ( 16 / 255.0f ) * 0.65f;
+                R.color[i * 3 + 2] = R.color[i * 3 + 2] * 0.35f + ( 35 / 255.0f ) * 0.65f;
+                R.stencil[i] = 0;
+            }
+
+            int                   total = kp_board_item_ranges( b, &items[0], wholeNet, nullptr, 0 );
+            std::vector<kp_range> ranges( (size_t) total );
+            kp_board_item_ranges( b, &items[0], wholeNet, ranges.data(), total );
+
+            std::stable_sort( ranges.begin(), ranges.end(),
+                              [&]( const kp_range& a, const kp_range& c ) { return sortKey( a.slot ) < sortKey( c.slot ); } );
+
+            for( const kp_range& r : ranges )
+            {
+                const kp_slot_info& s = slots[(size_t) r.slot];
+                float               mix = 0.45f;
+                R.fill( V, I, r.index_start, r.index_count, (uint8_t) ( r.slot % 255 + 1 ),
+                        s.r + ( 1 - s.r ) * mix, s.g + ( 1 - s.g ) * mix, s.b + ( 1 - s.b ) * mix,
+                        std::max( s.a, 0.85f ) );
+            }
+
+            printf( "highlight: %d range(s)%s\n", total, wholeNet ? " (whole net)" : "" );
+        }
+        else
+        {
+            printf( "nothing at (%.3f, %.3f)\n", pickX, pickY );
         }
     }
 
@@ -235,7 +400,7 @@ static int cmdRender( const char* aPath, const char* aOut, int aWidth, bool aBac
 
                 for( int sy = 0; sy < SS; ++sy )
                     for( int sx = 0; sx < SS; ++sx )
-                        sum += color[( (size_t) ( y * SS + sy ) * w + ( x * SS + sx ) ) * 3 + ch];
+                        sum += R.color[( (size_t) ( y * SS + sy ) * R.w + ( x * SS + sx ) ) * 3 + ch];
 
                 img[( (size_t) y * W + x ) * 3 + ch] =
                         (uint8_t) std::clamp( (int) std::lround( sum / ( SS * SS ) * 255 ), 0, 255 );
@@ -243,9 +408,9 @@ static int cmdRender( const char* aPath, const char* aOut, int aWidth, bool aBac
         }
     }
 
-    int ok = stbi_write_png( aOut, W, H, 3, img.data(), W * 3 );
-    printf( "%s: %dx%d, %d groups, %zu triangles -> %s\n", aPath, W, H, ng, ni / 3,
-            ok ? aOut : "WRITE FAILED" );
+    int ok = stbi_write_png( outPath, W, H, 3, img.data(), W * 3 );
+    printf( "%s: %dx%d (zoom %.1f px/mm), %d/%d groups, %zu triangles -> %s\n", path, W, H, zoom, drawnGroups,
+            ng, ni / 3, ok ? outPath : "WRITE FAILED" );
     kp_board_free( b );
     return ok ? 0 : 1;
 }
@@ -267,9 +432,37 @@ static int cmdCheck( int argc, char** argv )
 
         kp_stats s;
         kp_board_stats( b, &s );
-        printf( "OK  v%-8d fp=%-5d pads=%-6d trk=%-6d via=%-5d zone=%-3d tri=%-8lld warn=%d  %.0f+%.0f ms  %s\n",
+
+        // exercise picking and highlighting at a few points
+        double x0, y0, x1, y1;
+        kp_board_bounds( b, &x0, &y0, &x1, &y1 );
+        int picks = 0, ranges = 0;
+
+        for( int k = 0; k < 25; ++k )
+        {
+            double  px = x0 + ( x1 - x0 ) * ( ( k % 5 ) + 0.5 ) / 5;
+            double  py = y0 + ( y1 - y0 ) * ( ( k / 5 ) + 0.5 ) / 5;
+            kp_item it[4];
+            int     n = kp_board_pick( b, px, py, 0.5, nullptr, 0, 0, k & 1, it, 4 );
+            picks += n;
+
+            for( int j = 0; j < n; ++j )
+            {
+                (void) kp_board_item_info( b, &it[j] );
+                ranges += kp_board_item_ranges( b, &it[j], 0, nullptr, 0 );
+
+                if( it[j].net > 0 )
+                {
+                    ranges += kp_board_item_ranges( b, &it[j], 1, nullptr, 0 );
+                    (void) kp_board_net_info( b, it[j].net );
+                }
+            }
+        }
+
+        printf( "OK  v%-8d fp=%-5d pads=%-6d trk=%-6d via=%-5d zone=%-3d tri=%-8lld picks=%-3d warn=%d  %.0f+%.0f ms  %s\n",
                 s.file_version, s.footprints, s.pads, s.tracks + s.arcs, s.vias, s.zones,
-                (long long) s.triangle_count, s.warning_count, s.parse_ms, s.mesh_ms, argv[i] );
+                (long long) s.triangle_count, picks, s.warning_count, s.parse_ms, s.mesh_ms, argv[i] );
+        (void) ranges;
         kp_board_free( b );
     }
 
@@ -284,25 +477,15 @@ int main( int argc, char** argv )
         return cmdStats( argv[2] );
 
     if( argc >= 4 && !strcmp( argv[1], "render" ) )
-    {
-        int  width = 1600;
-        bool back = false;
+        return cmdRender( argc - 2, argv + 2 );
 
-        for( int i = 4; i < argc; ++i )
-        {
-            if( !strcmp( argv[i], "--back" ) )
-                back = true;
-            else
-                width = atoi( argv[i] );
-        }
-
-        return cmdRender( argv[2], argv[3], width, back );
-    }
+    if( argc >= 5 && !strcmp( argv[1], "pick" ) )
+        return cmdPick( argv[2], atof( argv[3] ), atof( argv[4] ), argc >= 6 ? atof( argv[5] ) : 0.2 );
 
     if( argc >= 3 && !strcmp( argv[1], "check" ) )
         return cmdCheck( argc - 2, argv + 2 );
 
-    fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli render <file> <out.png> [width] [--back]\n"
-                     "  kpcli check <files...>\n" );
+    fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli check <files...>\n  kpcli pick <file> <x> <y> [tol]\n"
+                     "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n" );
     return 2;
 }

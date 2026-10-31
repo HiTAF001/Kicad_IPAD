@@ -11,7 +11,12 @@ struct BoardCanvas: UIViewRepresentable {
     let hiddenKinds: Set<Int>
     let flipped: Bool
     let fitToken: Int
-    let onTap: @MainActor (SIMD2<Double>) -> Void
+    let highlight: HighlightSpec?
+    let measureA: SIMD2<Double>?
+    let measureB: SIMD2<Double>?
+    let focus: FocusRequest?
+    /// World position (mm) and finger tolerance (mm).
+    let onTap: @MainActor (SIMD2<Double>, Double) -> Void
 
     func makeCoordinator() -> BoardRenderer {
         BoardRenderer()
@@ -29,6 +34,10 @@ struct BoardCanvas: UIViewRepresentable {
                                    visibleSlots: visibleSlots,
                                    hiddenKinds: hiddenKinds,
                                    flipped: flipped,
-                                   fitToken: fitToken)
+                                   fitToken: fitToken,
+                                   highlight: highlight,
+                                   measureA: measureA,
+                                   measureB: measureB,
+                                   focus: focus)
     }
 }

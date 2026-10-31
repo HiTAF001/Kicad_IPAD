@@ -2,7 +2,8 @@
 // Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
 //
 // Swift wrapper around the C core: loads a board, copies its mesh into Metal buffers and keeps
-// the metadata the UI needs.
+// the metadata the UI needs. Picking, descriptions and highlight ranges are forwarded to the
+// core (call those from the main thread only).
 
 import Foundation
 import Metal
@@ -21,11 +22,17 @@ enum KiPadError: LocalizedError {
 /// Item kinds, matching KP_KIND_* in kpcore.h.
 enum ItemKind: Int, CaseIterable {
     case pad = 0, via, track, graphic, text, zone, wallPTH, wallNPTH, wallVia, hole
+    case label0, label1, label2, label3, label4
+}
+
+/// Item types, matching KP_ITEM_* in kpcore.h.
+enum ItemType: Int32 {
+    case nothing = 0, pad, via, track, arc, footprint, zone, shape, text
 }
 
 /// Object categories the user can toggle.
 enum ObjectCategory: String, CaseIterable, Identifiable {
-    case tracks, vias, pads, zones, graphics, texts, holes
+    case tracks, vias, pads, zones, graphics, texts, holes, labels
 
     var id: String { rawValue }
 
@@ -38,6 +45,7 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
         case .graphics: return "Çizimler"
         case .texts: return "Yazılar"
         case .holes: return "Delikler"
+        case .labels: return "Pad numarası ve net adları"
         }
     }
 
@@ -50,6 +58,7 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
         case .graphics: return "pencil.and.outline"
         case .texts: return "textformat"
         case .holes: return "smallcircle.filled.circle"
+        case .labels: return "number.square"
         }
     }
 
@@ -63,6 +72,8 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
         case .texts: return [ItemKind.text.rawValue]
         case .holes: return [ItemKind.wallPTH.rawValue, ItemKind.wallNPTH.rawValue,
                              ItemKind.wallVia.rawValue, ItemKind.hole.rawValue]
+        case .labels: return [ItemKind.label0.rawValue, ItemKind.label1.rawValue, ItemKind.label2.rawValue,
+                              ItemKind.label3.rawValue, ItemKind.label4.rawValue]
         }
     }
 }
@@ -83,6 +94,10 @@ struct LayerSlot: Identifiable {
     let color: SIMD4<Float>
     let defaultVisible: Bool
     let indexCount: UInt32
+    /// Label slots: shown only together with this layer slot.
+    let parentSlot: Int
+    /// +1 = only in the top view, -1 = only in the bottom view, 0 = always.
+    let viewSide: Int
 
     var hasContent: Bool { indexCount > 0 }
 
@@ -97,9 +112,10 @@ struct DrawGroup {
     let color: SIMD4<Float>
     let indexStart: UInt32
     let indexCount: UInt32
+    let minZoom: Float
 }
 
-struct BoardBounds {
+struct BoardBounds: Equatable {
     var minX: Double
     var minY: Double
     var maxX: Double
@@ -109,6 +125,88 @@ struct BoardBounds {
     var height: Double { maxY - minY }
     var midX: Double { (minX + maxX) / 2 }
     var midY: Double { (minY + maxY) / 2 }
+}
+
+/// A selectable thing on the board (mirrors kp_item).
+struct PickedItem: Equatable, Hashable {
+    var type: Int32
+    var index: Int32
+    var footprint: Int32
+    var net: Int32
+    var layer: Int32
+
+    init(type: Int32, index: Int32, footprint: Int32 = -1, net: Int32 = 0, layer: Int32 = -1) {
+        self.type = type
+        self.index = index
+        self.footprint = footprint
+        self.net = net
+        self.layer = layer
+    }
+
+    init(_ c: kp_item) {
+        self.init(type: c.type, index: c.index, footprint: c.footprint, net: c.net, layer: c.layer)
+    }
+
+    /// A whole net, without a particular item.
+    static func net(_ net: Int32) -> PickedItem {
+        PickedItem(type: ItemType.nothing.rawValue, index: -1, net: net)
+    }
+
+    static func footprint(_ index: Int32) -> PickedItem {
+        PickedItem(type: ItemType.footprint.rawValue, index: index, footprint: index)
+    }
+
+    var itemType: ItemType { ItemType(rawValue: type) ?? .nothing }
+
+    var cItem: kp_item {
+        kp_item(type: type, index: index, footprint: footprint, net: net, layer: layer)
+    }
+}
+
+struct InfoRow: Identifiable, Equatable {
+    let id: Int
+    let key: String
+    let value: String
+}
+
+/// Description produced by the core: a title and key/value rows.
+struct ItemDescription: Equatable {
+    let title: String
+    let rows: [InfoRow]
+
+    static let empty = ItemDescription(title: "", rows: [])
+
+    init(title: String, rows: [InfoRow]) {
+        self.title = title
+        self.rows = rows
+    }
+
+    /// Parses "Title\nKey\tValue\n...".
+    init(parsing text: String) {
+        var lines = text.components(separatedBy: "\n")
+        title = lines.isEmpty ? "" : lines.removeFirst()
+        rows = lines.enumerated().compactMap { offset, line in
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 2 else { return nil }
+            return InfoRow(id: offset, key: parts[0], value: parts.dropFirst().joined(separator: "\t"))
+        }
+    }
+
+    func value(for key: String) -> String? {
+        rows.first { $0.key == key }?.value
+    }
+}
+
+struct FootprintEntry: Identifiable {
+    let id: Int
+    let reference: String
+    let value: String
+    let back: Bool
+}
+
+struct NetEntry: Identifiable {
+    let id: Int
+    let name: String
 }
 
 final class MetalContext: @unchecked Sendable {
@@ -135,6 +233,8 @@ final class LoadedBoard: @unchecked Sendable {
     let groups: [DrawGroup]
     let bounds: BoardBounds
     let warnings: [String]
+    let footprints: [FootprintEntry]
+    let nets: [NetEntry]
     let vertexBuffer: MTLBuffer?
     let indexBuffer: MTLBuffer?
 
@@ -178,7 +278,9 @@ final class LoadedBoard: @unchecked Sendable {
                                       sortBack: Int(info.sort_back),
                                       color: SIMD4<Float>(info.r, info.g, info.b, info.a),
                                       defaultVisible: info.default_visible != 0,
-                                      indexCount: info.index_count))
+                                      indexCount: info.index_count,
+                                      parentSlot: Int(info.parent_slot),
+                                      viewSide: Int(info.view_side)))
         }
 
         slots = slotList
@@ -194,7 +296,8 @@ final class LoadedBoard: @unchecked Sendable {
                                        kind: Int(g.kind),
                                        color: SIMD4<Float>(g.r, g.g, g.b, g.a),
                                        indexStart: g.index_start,
-                                       indexCount: g.index_count))
+                                       indexCount: g.index_count,
+                                       minZoom: g.min_zoom))
         }
 
         groups = groupList
@@ -212,6 +315,32 @@ final class LoadedBoard: @unchecked Sendable {
         }
 
         warnings = warn
+
+        var fpList: [FootprintEntry] = []
+        let fpCount = Int(kp_board_footprint_count(handle))
+        fpList.reserveCapacity(fpCount)
+
+        for i in 0..<fpCount {
+            let ref = kp_board_footprint_ref(handle, Int32(i)).map { String(cString: $0) } ?? ""
+            let value = kp_board_footprint_value(handle, Int32(i)).map { String(cString: $0) } ?? ""
+            fpList.append(FootprintEntry(id: i, reference: ref, value: value,
+                                         back: kp_board_footprint_back(handle, Int32(i)) != 0))
+        }
+
+        footprints = fpList
+
+        var netList: [NetEntry] = []
+        let netCount = Int(kp_board_net_count(handle))
+
+        for i in 1..<max(netCount, 1) {
+            let n = kp_board_net_name(handle, Int32(i)).map { String(cString: $0) } ?? ""
+
+            if !n.isEmpty {
+                netList.append(NetEntry(id: i, name: n))
+            }
+        }
+
+        nets = netList
 
         // Upload the mesh to the GPU, then free the CPU copy. All throwing happens before the
         // last stored properties are set, so deinit (which frees the handle) never runs for a
@@ -280,5 +409,72 @@ final class LoadedBoard: @unchecked Sendable {
             kp_board_free(handle)
             throw error
         }
+    }
+
+    // MARK: - Queries (main thread)
+
+    func pick(at point: SIMD2<Double>, tolerance: Double, visible: [UInt8], hiddenKinds: UInt32,
+              flipped: Bool) -> [PickedItem] {
+        var out = [kp_item](repeating: kp_item(), count: 16)
+        let capacity = Int32(out.count)
+
+        let n = visible.withUnsafeBufferPointer { vis -> Int32 in
+            out.withUnsafeMutableBufferPointer { o -> Int32 in
+                kp_board_pick(handle, point.x, point.y, tolerance, vis.baseAddress, Int32(vis.count),
+                              hiddenKinds, flipped ? 1 : 0, o.baseAddress, capacity)
+            }
+        }
+
+        return out.prefix(Int(max(n, 0))).map { PickedItem($0) }
+    }
+
+    func snap(_ point: SIMD2<Double>, tolerance: Double, visible: [UInt8]) -> SIMD2<Double>? {
+        var x = 0.0
+        var y = 0.0
+
+        let found = visible.withUnsafeBufferPointer { vis -> Int32 in
+            kp_board_snap(handle, point.x, point.y, tolerance, vis.baseAddress, Int32(vis.count), &x, &y)
+        }
+
+        return found != 0 ? SIMD2(x, y) : nil
+    }
+
+    func describe(_ item: PickedItem) -> ItemDescription {
+        if item.itemType == .nothing {
+            return describeNet(item.net)
+        }
+
+        var c = item.cItem
+        guard let p = kp_board_item_info(handle, &c) else { return .empty }
+        return ItemDescription(parsing: String(cString: p))
+    }
+
+    func describeNet(_ net: Int32) -> ItemDescription {
+        guard net > 0, let p = kp_board_net_info(handle, net) else { return .empty }
+        return ItemDescription(parsing: String(cString: p))
+    }
+
+    func bounds(of item: PickedItem, wholeNet: Bool) -> BoardBounds? {
+        var c = item.cItem
+        var x0 = 0.0, y0 = 0.0, x1 = 0.0, y1 = 0.0
+
+        guard kp_board_item_bounds(handle, &c, wholeNet ? 1 : 0, &x0, &y0, &x1, &y1) != 0 else {
+            return nil
+        }
+
+        return BoardBounds(minX: x0, minY: y0, maxX: x1, maxY: y1)
+    }
+
+    func ranges(of item: PickedItem, wholeNet: Bool) -> [kp_range] {
+        var c = item.cItem
+        let total = Int(kp_board_item_ranges(handle, &c, wholeNet ? 1 : 0, nil, 0))
+
+        guard total > 0 else { return [] }
+
+        var out = [kp_range](repeating: kp_range(), count: total)
+        out.withUnsafeMutableBufferPointer { o in
+            _ = kp_board_item_ranges(handle, &c, wholeNet ? 1 : 0, o.baseAddress, Int32(total))
+        }
+        return out
     }
 }

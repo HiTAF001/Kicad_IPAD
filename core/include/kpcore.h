@@ -33,7 +33,23 @@ enum
     KP_KIND_WALL_NPTH = 7,
     KP_KIND_WALL_VIA = 8,
     KP_KIND_HOLE = 9,
-    KP_KIND_COUNT = 10
+    KP_KIND_LABEL0 = 10, /**< pad number / net name labels, 5 size buckets (10..14) */
+    KP_KIND_LABEL4 = 14,
+    KP_KIND_COUNT = 15
+};
+
+/** Selectable item types. */
+enum
+{
+    KP_ITEM_NONE = 0,
+    KP_ITEM_PAD = 1,
+    KP_ITEM_VIA = 2,
+    KP_ITEM_TRACK = 3,
+    KP_ITEM_ARC = 4,
+    KP_ITEM_FOOTPRINT = 5,
+    KP_ITEM_ZONE = 6,
+    KP_ITEM_SHAPE = 7,
+    KP_ITEM_TEXT = 8
 };
 
 /** Layer slot kinds. */
@@ -95,6 +111,7 @@ typedef struct
     float    r, g, b, a;  /**< colour, straight alpha */
     uint32_t index_start; /**< first index in the index buffer */
     uint32_t index_count; /**< number of indices (multiple of 3) */
+    float    min_zoom;    /**< draw only when the zoom (pixels per mm) is at least this */
 } kp_group;
 
 typedef struct
@@ -106,7 +123,26 @@ typedef struct
     float    r, g, b, a;
     int32_t  default_visible;
     uint32_t index_count; /**< 0 = nothing drawn on this slot */
+    int32_t  parent_slot; /**< label slots: visible only together with this slot (-1 = none) */
+    int32_t  view_side;   /**< +1 only in top view, -1 only in bottom view, 0 always */
 } kp_slot_info;
+
+typedef struct
+{
+    int32_t type;      /**< KP_ITEM_* */
+    int32_t index;     /**< index within its type */
+    int32_t footprint; /**< owning footprint or -1 */
+    int32_t net;       /**< net index, 0 = none */
+    int32_t layer;     /**< layer slot the item was hit on, or -1 */
+} kp_item;
+
+typedef struct
+{
+    uint32_t index_start;
+    uint32_t index_count;
+    int32_t  slot;
+    int32_t  kind;
+} kp_range;
 
 /**
  * Parse a .kicad_pcb file from memory and build its render mesh.
@@ -137,6 +173,45 @@ void kp_board_release_mesh( kp_board* board );
 
 void kp_board_bounds( const kp_board* board, double* min_x, double* min_y, double* max_x,
                       double* max_y );
+
+/**
+ * Items under (x, y) in millimetres, best first. slot_visible holds one byte per slot
+ * (non-zero = visible); hidden_kinds has bit (1 << KP_KIND_x) set for hidden item kinds.
+ * Returns the number of items written (at most max_out).
+ */
+int32_t kp_board_pick( const kp_board* board, double x, double y, double tolerance,
+                       const uint8_t* slot_visible, int32_t slot_count, uint32_t hidden_kinds,
+                       int32_t flipped, kp_item* out, int32_t max_out );
+
+/** Centre of the nearest visible pad/via within tolerance. Returns 1 if found. */
+int32_t kp_board_snap( const kp_board* board, double x, double y, double tolerance,
+                       const uint8_t* slot_visible, int32_t slot_count, double* out_x, double* out_y );
+
+/**
+ * Description as "Title\nKey\tValue\n...". The pointer stays valid until the next call of
+ * kp_board_item_info / kp_board_net_info on this board.
+ */
+const char* kp_board_item_info( kp_board* board, const kp_item* item );
+const char* kp_board_net_info( kp_board* board, int32_t net );
+
+/** Bounds of an item (or of a whole net when whole_net != 0). Returns 0 if empty. */
+int32_t kp_board_item_bounds( const kp_board* board, const kp_item* item, int32_t whole_net,
+                              double* min_x, double* min_y, double* max_x, double* max_y );
+
+/**
+ * Triangle ranges (in the index buffer) to highlight an item (a footprint: all its parts) or,
+ * when whole_net != 0, every copper item of item->net. Returns the total number of ranges;
+ * at most max_out are written (pass out = NULL to query the count).
+ */
+int32_t kp_board_item_ranges( kp_board* board, const kp_item* item, int32_t whole_net,
+                              kp_range* out, int32_t max_out );
+
+int32_t     kp_board_footprint_count( const kp_board* board );
+const char* kp_board_footprint_ref( const kp_board* board, int32_t index );
+const char* kp_board_footprint_value( const kp_board* board, int32_t index );
+int32_t     kp_board_footprint_back( const kp_board* board, int32_t index );
+int32_t     kp_board_net_count( const kp_board* board );
+const char* kp_board_net_name( const kp_board* board, int32_t net );
 
 const char* kp_core_version( void );
 

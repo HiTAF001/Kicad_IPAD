@@ -14,6 +14,7 @@ add_library( kpcore STATIC
     core/src/stroke_font.cpp
     core/src/newstroke_font.cpp
     core/src/mesh.cpp
+    core/src/pick.cpp
     core/src/kpcore.cpp
 )
 target_include_directories( kpcore PUBLIC core/include PRIVATE core/src )

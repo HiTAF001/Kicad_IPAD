@@ -4,6 +4,7 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import simd
 
 extension UTType {
     /// Declared in Info.plist (UTImportedTypeDeclarations).
@@ -13,6 +14,28 @@ extension UTType {
 struct SampleBoard: Identifiable {
     let id: String      // resource name in the bundle
     let title: String
+}
+
+/// What is selected and what the user can cycle through at the same spot.
+struct Selection: Equatable {
+    var item: PickedItem
+    var info: ItemDescription
+    var netInfo: ItemDescription?
+    var candidates: [PickedItem]
+    var candidateIndex: Int
+    var tapPoint: SIMD2<Double>?
+}
+
+/// What the renderer should light up.
+struct HighlightSpec: Equatable {
+    var item: PickedItem
+    var wholeNet: Bool
+}
+
+/// Ask the renderer to frame a region.
+struct FocusRequest: Equatable {
+    var bounds: BoardBounds
+    var id: Int
 }
 
 @MainActor
@@ -27,6 +50,27 @@ final class BoardStore: ObservableObject {
     @Published private(set) var fitToken = 0
     @Published var cursorText: String?
 
+    // selection & highlight
+    @Published private(set) var selection: Selection?
+    @Published var highlightWholeNet = false
+
+    // measuring
+    @Published var measureMode = false {
+        didSet {
+            if !measureMode {
+                measureA = nil
+                measureB = nil
+            }
+        }
+    }
+    @Published private(set) var measureA: SIMD2<Double>?
+    @Published private(set) var measureB: SIMD2<Double>?
+    @Published private(set) var measureSnapA = false
+    @Published private(set) var measureSnapB = false
+
+    @Published private(set) var focusRequest: FocusRequest?
+    private var focusCounter = 0
+
     /// Set from launch arguments (used by the CI screenshot job).
     @Published var autoPanel: String?
 
@@ -38,8 +82,19 @@ final class BoardStore: ObservableObject {
     private var launchHandled = false
     private var pendingFlip = false
     private var pendingPanel: String?
+    private var pendingActions: [String] = []
 
-    /// Launch arguments: -KiPadOpenSample <id>  -KiPadFlip YES  -KiPadPanel info|layers
+    var highlight: HighlightSpec? {
+        guard let selection else { return nil }
+        return HighlightSpec(item: selection.item,
+                             wholeNet: (highlightWholeNet || selection.item.itemType == .nothing)
+                                 && selection.item.net > 0)
+    }
+
+    // MARK: - Launch arguments (CI screenshots)
+
+    /// -KiPadOpenSample <id>  -KiPadFlip YES  -KiPadPanel info|layers|search
+    /// -KiPadDemo select|net|measure|labels
     func handleLaunchArguments() {
         guard !launchHandled else { return }
 
@@ -50,7 +105,50 @@ final class BoardStore: ObservableObject {
            let sample = samples.first(where: { $0.id == id }) {
             pendingFlip = defaults.bool(forKey: "KiPadFlip")
             pendingPanel = defaults.string(forKey: "KiPadPanel")
+
+            if let demo = defaults.string(forKey: "KiPadDemo") {
+                pendingActions.append(demo)
+            }
+
             openSample(sample)
+        }
+    }
+
+    private func runDemo(_ demo: String) {
+        guard let board else { return }
+
+        // pick the footprint with the most pads as a stable, interesting target
+        let pads = board.footprints.map { fp -> (Int, Int) in
+            let n = Int(board.describe(.footprint(Int32(fp.id))).value(for: "Pad sayısı") ?? "0") ?? 0
+            return (fp.id, n)
+        }
+        let target = pads.max { $0.1 < $1.1 }?.0 ?? 0
+
+        switch demo {
+        case "select":
+            selectFootprint(target)
+
+        case "net":
+            if let busiest = board.nets.max(by: { a, b in
+                (Int(board.describeNet(Int32(a.id)).value(for: "Pad") ?? "0") ?? 0)
+                    < (Int(board.describeNet(Int32(b.id)).value(for: "Pad") ?? "0") ?? 0)
+            }) {
+                selectNet(busiest.id)
+            }
+
+        case "measure":
+            measureMode = true
+            let b = board.bounds
+            measureA = SIMD2(b.minX + b.width * 0.2, b.minY + b.height * 0.3)
+            measureB = SIMD2(b.minX + b.width * 0.7, b.minY + b.height * 0.7)
+
+        case "labels":
+            if let bounds = board.bounds(of: .footprint(0), wholeNet: false) {
+                focus(on: bounds, minSize: 12)
+            }
+
+        default:
+            break
         }
     }
 
@@ -106,11 +204,21 @@ final class BoardStore: ObservableObject {
             flipped = pendingFlip
             pendingFlip = false
             cursorText = nil
+            selection = nil
+            highlightWholeNet = false
+            measureMode = false
             fitToken += 1
 
             if let panel = pendingPanel {
                 pendingPanel = nil
                 autoPanel = panel
+            }
+
+            let actions = pendingActions
+            pendingActions = []
+
+            for action in actions {
+                runDemo(action)
             }
 
         case .failure(let error):
@@ -121,6 +229,7 @@ final class BoardStore: ObservableObject {
     func close() {
         board = nil
         cursorText = nil
+        selection = nil
     }
 
     // MARK: - View state
@@ -180,6 +289,154 @@ final class BoardStore: ObservableObject {
 
     func setCursor(_ point: SIMD2<Double>) {
         cursorText = String(format: "X %.3f mm   Y %.3f mm", point.x, point.y)
+    }
+
+    /// One byte per slot for the core's picking functions.
+    private func visibilityBytes() -> [UInt8] {
+        guard let board else { return [] }
+        return board.slots.map { visibleSlots.contains($0.id) ? 1 : 0 }
+    }
+
+    private func hiddenKindMask() -> UInt32 {
+        hiddenKinds.reduce(UInt32(0)) { mask, kind in
+            kind >= 0 && kind < 32 ? mask | (UInt32(1) << UInt32(kind)) : mask
+        }
+    }
+
+    // MARK: - Taps
+
+    /// A tap on the board at a world position; tolerance is in millimetres.
+    func handleTap(at point: SIMD2<Double>, tolerance: Double) {
+        guard let board else { return }
+
+        setCursor(point)
+
+        if measureMode {
+            measureTap(at: point, tolerance: tolerance)
+            return
+        }
+
+        // tapping the same spot again walks through the items stacked there
+        if var sel = selection, let tp = sel.tapPoint, simd_distance(tp, point) <= tolerance,
+           sel.candidates.count > 1 {
+            sel.candidateIndex = (sel.candidateIndex + 1) % sel.candidates.count
+            sel.item = sel.candidates[sel.candidateIndex]
+            sel.info = board.describe(sel.item)
+            sel.netInfo = sel.item.net > 0 ? board.describeNet(sel.item.net) : nil
+            selection = sel
+            return
+        }
+
+        let hits = board.pick(at: point, tolerance: tolerance, visible: visibilityBytes(),
+                              hiddenKinds: hiddenKindMask(), flipped: flipped)
+
+        guard let first = hits.first else {
+            selection = nil
+            return
+        }
+
+        select(first, candidates: hits, tapPoint: point)
+    }
+
+    private func select(_ item: PickedItem, candidates: [PickedItem], tapPoint: SIMD2<Double>?) {
+        guard let board else { return }
+
+        selection = Selection(item: item,
+                              info: board.describe(item),
+                              netInfo: item.net > 0 && item.itemType != .nothing ? board.describeNet(item.net) : nil,
+                              candidates: candidates,
+                              candidateIndex: 0,
+                              tapPoint: tapPoint)
+    }
+
+    func nextCandidate() {
+        guard let board, var sel = selection, sel.candidates.count > 1 else { return }
+
+        sel.candidateIndex = (sel.candidateIndex + 1) % sel.candidates.count
+        sel.item = sel.candidates[sel.candidateIndex]
+        sel.info = board.describe(sel.item)
+        sel.netInfo = sel.item.net > 0 ? board.describeNet(sel.item.net) : nil
+        selection = sel
+    }
+
+    func clearSelection() {
+        selection = nil
+        highlightWholeNet = false
+    }
+
+    func selectFootprint(_ index: Int) {
+        let item = PickedItem.footprint(Int32(index))
+        select(item, candidates: [item], tapPoint: nil)
+        highlightWholeNet = false
+        focusOnSelection()
+    }
+
+    func selectNet(_ net: Int) {
+        let item = PickedItem.net(Int32(net))
+        select(item, candidates: [item], tapPoint: nil)
+        highlightWholeNet = true
+        focusOnSelection()
+    }
+
+    func focusOnSelection() {
+        guard let board, let sel = selection else { return }
+
+        let wholeNet = sel.item.itemType == .nothing || (highlightWholeNet && sel.item.net > 0)
+
+        if let b = board.bounds(of: sel.item, wholeNet: wholeNet) {
+            focus(on: b, minSize: wholeNet ? 5 : 3)
+        }
+    }
+
+    private func focus(on bounds: BoardBounds, minSize: Double) {
+        var b = bounds
+        let grow = max(0, minSize - b.width) / 2
+        let growY = max(0, minSize - b.height) / 2
+        b.minX -= grow
+        b.maxX += grow
+        b.minY -= growY
+        b.maxY += growY
+        focusCounter += 1
+        focusRequest = FocusRequest(bounds: b, id: focusCounter)
+    }
+
+    // MARK: - Measuring
+
+    private func measureTap(at point: SIMD2<Double>, tolerance: Double) {
+        guard let board else { return }
+
+        let snapped = board.snap(point, tolerance: tolerance, visible: visibilityBytes())
+        let p = snapped ?? point
+
+        if measureA == nil || measureB != nil {
+            measureA = p
+            measureSnapA = snapped != nil
+            measureB = nil
+            measureSnapB = false
+        } else {
+            measureB = p
+            measureSnapB = snapped != nil
+        }
+    }
+
+    func clearMeasurement() {
+        measureA = nil
+        measureB = nil
+    }
+
+    var measurementSummary: String? {
+        guard let a = measureA, let b = measureB else { return nil }
+
+        let d = b - a
+        let dist = simd_length(d)
+        // KiCad angle sense: counter-clockwise on screen (Y axis points down)
+        var angle = atan2(-d.y, d.x) * 180 / .pi
+
+        if angle < 0 {
+            angle += 360
+        }
+
+        return String(format: "%.3f mm   ΔX %.3f   ΔY %.3f   %.1f°", dist, d.x, d.y, angle)
     }
 }
 

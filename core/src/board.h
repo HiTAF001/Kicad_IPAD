@@ -191,6 +191,8 @@ struct Pad
     bool        drillOval = false;
     int         net = 0;
     int         footprint = -1;
+    std::string pinFunction;
+    std::string pinType;
 };
 
 struct Track
@@ -256,6 +258,7 @@ struct Footprint
     int         padCount = 0;
     std::unordered_map<std::string, std::string> fields;
     std::vector<std::string> attrs;
+    BBox        localBox; ///< outline in the footprint frame (rotate by -angle around pos)
 };
 
 struct BoardStats
@@ -306,6 +309,9 @@ public:
     BBox OutlineBBox() const;    ///< bounding box of Edge.Cuts (invalid if none)
     BBox ContentBBox() const;    ///< bounding box of all geometry
     BoardStats Stats() const;
+
+    /// Compute derived data after parsing (footprint boxes).
+    void Finalize();
 
     /// Resolve ${VAR} references in a text owned by footprint aFootprint (or -1).
     std::string ResolveText( const std::string& aText, int aFootprint, int aLayer ) const;

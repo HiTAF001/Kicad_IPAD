@@ -35,7 +35,36 @@ enum class ItemKind : uint8_t
     WALL_NPTH,
     WALL_VIA,
     HOLE,
+    LABEL0, ///< pad number / net name labels, smallest text bucket (visible only when zoomed in)
+    LABEL1,
+    LABEL2,
+    LABEL3,
+    LABEL4, ///< biggest text bucket (visible early)
     COUNT
+};
+
+/// Selectable item types (also used by the C API).
+enum class ItemType : uint8_t
+{
+    NONE = 0,
+    PAD,
+    VIA,
+    TRACK,
+    ARC,
+    FOOTPRINT,
+    ZONE,
+    SHAPE,
+    TEXT,
+    COUNT
+};
+
+/// A run of triangles (index range in Mesh::indices) belonging to one item on one slot.
+struct ItemRange
+{
+    uint32_t start = 0;
+    uint32_t count = 0;
+    int32_t  slot = 0;
+    uint8_t  kind = 0;
 };
 
 struct DrawGroup
@@ -45,6 +74,7 @@ struct DrawGroup
     std::array<float, 4> color { 1, 1, 1, 1 };
     uint32_t             indexStart = 0;
     uint32_t             indexCount = 0;
+    float                minZoom = 0.0f; ///< draw only when zoom (pixels per mm) >= this
 };
 
 struct Slot
@@ -59,6 +89,8 @@ struct Slot
     std::array<float, 4> color { 1, 1, 1, 1 };
     bool                 defaultVisible = true;
     uint32_t             indexCount = 0;
+    int                  parentSlot = -1; ///< label slots: only visible when this slot is
+    int                  viewSide = 0;    ///< +1 = only in top view, -1 = only in bottom view
 };
 
 struct Mesh
@@ -68,6 +100,12 @@ struct Mesh
     std::vector<DrawGroup> groups;   ///< in front-view draw order
     std::vector<Slot>      slots;
     BBox                   bounds;   ///< board outline (or content) bounds
+
+    /// Per item triangle ranges, for highlighting: ranges of item i of type t are
+    /// ranges[ offsets[t][i] .. offsets[t][i+1] ).
+    std::vector<ItemRange>             ranges;
+    std::vector<std::vector<uint32_t>> offsets; ///< indexed by ItemType
+    std::vector<BBox>                  textBounds; ///< per Board::texts entry
 };
 
 /// Background colour used for drilled holes (KiCad default PCB background).

@@ -1767,6 +1767,14 @@ void BoardParser::parsePad( N aNode, int aFootprint, const FpXform& aXf )
         {
             p.net = netRef( c );
         }
+        else if( k == "pinfunction" )
+        {
+            p.pinFunction = std::string( c.str( 0 ) );
+        }
+        else if( k == "pintype" )
+        {
+            p.pinType = std::string( c.str( 0 ) );
+        }
     }
 
     parsePadGeom( aNode, p.geom, false );
@@ -2552,12 +2560,90 @@ std::string Board::ResolveText( const std::string& aText, int aFootprint, int aL
 }
 
 
+void Board::Finalize()
+{
+    // Footprint outlines in the footprint frame: courtyard if present, otherwise pads and
+    // fab/silk drawings. Used for picking and zoom-to.
+    std::vector<BBox> court( footprints.size() ), other( footprints.size() );
+
+    auto toLocal = [&]( int fp, const Pt& p )
+    {
+        const Footprint& f = footprints[(size_t) fp];
+        return RotatePt( p - f.pos, -f.angle );
+    };
+
+    for( const Shape& s : shapes )
+    {
+        if( s.footprint < 0 || s.layer < 0 )
+            continue;
+
+        LayerKind k = layers[(size_t) s.layer].kind;
+        BBox*     box = nullptr;
+
+        if( k == LayerKind::COURTYARD )
+            box = &court[(size_t) s.footprint];
+        else if( k == LayerKind::FAB || k == LayerKind::SILK )
+            box = &other[(size_t) s.footprint];
+
+        if( !box )
+            continue;
+
+        auto addPt = [&]( const Pt& q ) { box->add( toLocal( s.footprint, q ), s.width / 2 ); };
+
+        switch( s.type )
+        {
+        case ShapeType::CIRCLE:
+        {
+            double r = std::hypot( s.end.x - s.start.x, s.end.y - s.start.y );
+            box->add( toLocal( s.footprint, s.start ), r + s.width / 2 );
+            break;
+        }
+        case ShapeType::ARC:
+            addPt( s.start );
+            addPt( s.mid );
+            addPt( s.end );
+            break;
+        case ShapeType::POLY:
+        case ShapeType::BEZIER:
+            for( const Pt& q : s.poly )
+                addPt( q );
+            break;
+        default:
+            addPt( s.start );
+            addPt( s.end );
+        }
+    }
+
+    for( const Pad& p : pads )
+    {
+        if( p.footprint < 0 )
+            continue;
+
+        double r = std::max( p.geom.size.x, p.geom.size.y ) / 2;
+        Pt     c = p.pos + RotatePt( p.geom.offset, p.angle );
+        other[(size_t) p.footprint].add( toLocal( p.footprint, c ), r );
+    }
+
+    for( size_t i = 0; i < footprints.size(); ++i )
+    {
+        footprints[i].localBox = court[i].valid() ? court[i] : other[i];
+
+        if( !footprints[i].localBox.valid() )
+        {
+            footprints[i].localBox.add( Pt( -0.5, -0.5 ) );
+            footprints[i].localBox.add( Pt( 0.5, 0.5 ) );
+        }
+    }
+}
+
+
 void LoadBoard( Board& aBoard, const char* aData, size_t aLen )
 {
     aBoard = Board();
     aBoard.nets.push_back( std::string() ); // net 0 = no net
     BoardParser parser( aBoard );
     parser.Parse( aData, aLen );
+    aBoard.Finalize();
 }
 
 } // namespace kp

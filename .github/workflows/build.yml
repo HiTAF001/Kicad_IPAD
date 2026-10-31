@@ -180,6 +180,11 @@ jobs:
           shoot 3-pic-back -KiPadOpenSample pic_programmer -KiPadFlip YES
           shoot 4-ecc83-layers -KiPadOpenSample ecc83-pp -KiPadPanel layers
           shoot 5-pic-info -KiPadOpenSample pic_programmer -KiPadPanel info
+          shoot 6-select-footprint -KiPadOpenSample pic_programmer -KiPadDemo select
+          shoot 7-net-highlight -KiPadOpenSample pic_programmer -KiPadDemo net
+          shoot 8-measure -KiPadOpenSample pic_programmer -KiPadDemo measure
+          shoot 9-labels -KiPadOpenSample pic_programmer -KiPadDemo labels
+          shoot 10-search -KiPadOpenSample pic_programmer -KiPadPanel search
           xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "KiPad"' --style compact > shots/app-log.txt 2>&1 || true
           ls -la shots
 

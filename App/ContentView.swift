@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showLayers = false
     @State private var showInfo = false
     @State private var showHelp = false
+    @State private var showSearch = false
 
     var body: some View {
         NavigationStack {
@@ -20,10 +21,28 @@ struct ContentView: View {
                                 hiddenKinds: store.hiddenKinds,
                                 flipped: store.flipped,
                                 fitToken: store.fitToken,
-                                onTap: { point in store.setCursor(point) })
+                                highlight: store.highlight,
+                                measureA: store.measureA,
+                                measureB: store.measureB,
+                                focus: store.focusRequest,
+                                onTap: { point, tolerance in
+                                    store.handleTap(at: point, tolerance: tolerance)
+                                })
                         .ignoresSafeArea(edges: [.bottom, .horizontal])
 
                     statusBar
+
+                    if let selection = store.selection, !store.measureMode {
+                        SelectionCard(selection: selection)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+
+                    if store.measureMode {
+                        MeasureBar()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
                 } else {
                     WelcomeView(openFile: { showImporter = true })
                 }
@@ -32,6 +51,7 @@ struct ContentView: View {
                     loadingOverlay
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: store.selection?.item)
             .navigationTitle(store.board?.name ?? "KiPad")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -55,6 +75,10 @@ struct ContentView: View {
             .sheet(isPresented: $showHelp) {
                 HelpView()
             }
+            .sheet(isPresented: $showSearch) {
+                SearchView()
+                    .environmentObject(store)
+            }
             .task {
                 store.handleLaunchArguments()
             }
@@ -68,6 +92,8 @@ struct ContentView: View {
                         showInfo = true
                     } else if panel == "layers" {
                         showLayers = true
+                    } else if panel == "search" {
+                        showSearch = true
                     }
                 }
             }
@@ -103,6 +129,18 @@ struct ContentView: View {
 
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if store.board != nil {
+                Button {
+                    showSearch = true
+                } label: {
+                    Label("Ara", systemImage: "magnifyingglass")
+                }
+
+                Button {
+                    store.measureMode.toggle()
+                } label: {
+                    Label("Ölç", systemImage: store.measureMode ? "ruler.fill" : "ruler")
+                }
+
                 Button {
                     store.flipped.toggle()
                 } label: {
@@ -151,7 +189,7 @@ struct ContentView: View {
                 Text(text)
                     .monospacedDigit()
             } else {
-                Text("Dokun: koordinat · Çift dokun: yakınlaş · İki parmakla dokun: sığdır")
+                Text("Dokun: seç · Aynı yere tekrar dokun: alttaki öğe · Çift dokun: yakınlaş · İki parmak: sığdır")
             }
 
             if store.flipped {
@@ -254,7 +292,15 @@ struct HelpView: View {
                     helpRow("arrow.up.left.and.arrow.down.right", "İki parmakla sıkıştır", "Yakınlaştırır / uzaklaştırır")
                     helpRow("hand.tap", "Çift dokun", "Dokunulan yere 2× yakınlaşır")
                     helpRow("hand.tap.fill", "İki parmakla tek dokun", "Kartı ekrana sığdırır")
-                    helpRow("scope", "Tek dokun", "O noktanın koordinatını (mm) gösterir")
+                    helpRow("hand.point.up.left", "Tek dokun", "Öğeyi seçer (pad, via, pist, footprint, bölge…) ve bilgisini gösterir")
+                    helpRow("square.3.layers.3d.down.right", "Aynı yere tekrar dokun", "Üst üste binen öğeler arasında geçer")
+                }
+
+                Section("Araçlar") {
+                    helpRow("point.3.connected.trianglepath.dotted", "Neti vurgula", "Seçili öğenin netindeki her şeyi parlatır, gerisini karartır")
+                    helpRow("magnifyingglass", "Ara", "Footprint (R12, U3, 10k) ya da net (GND, SDA) bulur ve oraya gider")
+                    helpRow("ruler", "Ölç", "İki noktaya dokun: mesafe, ΔX, ΔY ve açı. Pad/via merkezlerine tutunur")
+                    helpRow("number.square", "Pad ve net adları", "Yakınlaştıkça pad numaraları ve net adları görünür")
                 }
 
                 Section("Klavye / trackpad") {

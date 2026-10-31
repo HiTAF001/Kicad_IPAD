@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <thread>
+#include <unordered_set>
 
 namespace mapbox
 {
@@ -366,6 +367,33 @@ struct Acc
         }
     }
 
+    /// Text strokes drawn as quads with square ends: cheap, fine for small labels.
+    void strokeQuads( const std::vector<Path>& strokes, double w )
+    {
+        double hw = w / 2;
+
+        for( const Path& s : strokes )
+        {
+            for( size_t k = 0; k + 1 < s.size(); ++k )
+            {
+                const Pt& a = s[k];
+                const Pt& b = s[k + 1];
+                double    dx = b.x - a.x, dy = b.y - a.y;
+                double    len = std::hypot( dx, dy );
+                double    ux = len > 1e-12 ? dx / len : 1.0, uy = len > 1e-12 ? dy / len : 0.0;
+                Pt        n( -uy * hw, ux * hw );
+                Pt        a2( a.x - ux * hw, a.y - uy * hw ), b2( b.x + ux * hw, b.y + uy * hw );
+                uint32_t  base_ = base();
+                vert( a2 + n );
+                vert( a2 - n );
+                vert( b2 - n );
+                vert( b2 + n );
+                tri( base_, base_ + 1, base_ + 2 );
+                tri( base_, base_ + 2, base_ + 3 );
+            }
+        }
+    }
+
     void append( const Acc& o )
     {
         uint32_t b = base();
@@ -452,21 +480,56 @@ public:
     void Build();
 
 private:
-    Acc& acc( int aSlot, ItemKind aKind )
+    static constexpr size_t LABEL_TRIANGLE_BUDGET = 4'000'000;
+
+    size_t accId( int aSlot, ItemKind aKind ) const
     {
-        return m_acc[(size_t) aSlot * (size_t) ItemKind::COUNT + (size_t) aKind];
+        return (size_t) aSlot * (size_t) ItemKind::COUNT + (size_t) aKind;
     }
+
+    Acc& acc( int aSlot, ItemKind aKind ) { return m_acc[accId( aSlot, aKind )]; }
+
+    /// Run aDraw on the accumulator of (slot, kind) and remember the triangles it added as a
+    /// range of the current item.
+    template <typename F>
+    void record( int aSlot, ItemKind aKind, F&& aDraw )
+    {
+        size_t   id = accId( aSlot, aKind );
+        Acc&     a = m_acc[id];
+        uint32_t s0 = (uint32_t) a.i.size();
+        aDraw( a );
+        uint32_t n = (uint32_t) a.i.size() - s0;
+
+        if( n )
+            m_pending.push_back( { id, s0, n } );
+    }
+
+    void beginItem( ItemType t ) { m_mesh.offsets[(size_t) t].push_back( (uint32_t) m_pending.size() ); }
+    void endType( ItemType t ) { m_mesh.offsets[(size_t) t].push_back( (uint32_t) m_pending.size() ); }
 
     void addShape( Acc& a, const Shape& s, const Pt* aPadPos = nullptr, double aPadAngle = 0 );
     void padGeomToAcc( Acc& a, const Pad& p, const PadGeom& g );
     void addHole( Acc& a, const Pt& pos, double angle, const Pt& size, double grow );
-    void addText( const Text& t );
+    void addText( size_t aIndex, const Text& t );
+    void addLabels();
+    void addLabel( int aLayer, const std::string& aText, const Pt& aCenter, double aAngle,
+                   double aMaxH, double aMaxW, bool aMirror );
 
-    const Board&     m_board;
-    Mesh&            m_mesh;
-    std::vector<Acc> m_acc;
-    int              m_wallSlot = 0;
-    int              m_holeSlot = 0;
+    struct Pending
+    {
+        size_t   acc;
+        uint32_t start;
+        uint32_t count;
+    };
+
+    const Board&         m_board;
+    Mesh&                m_mesh;
+    std::vector<Acc>     m_acc;
+    std::vector<Pending> m_pending;
+    std::vector<int>     m_labelSlot;
+    size_t               m_labelTriangles = 0;
+    int                  m_wallSlot = 0;
+    int                  m_holeSlot = 0;
 };
 
 
@@ -655,43 +718,245 @@ void Builder::addHole( Acc& a, const Pt& pos, double angle, const Pt& size, doub
 }
 
 
-void Builder::addText( const Text& t )
+void Builder::addText( size_t aIndex, const Text& t )
 {
     if( t.layer < 0 || !t.visible )
         return;
 
-    Acc& a = acc( t.layer, ItemKind::TEXT );
+    BBox& box = m_mesh.textBounds[aIndex];
 
-    if( !t.renderCache.empty() )
+    record( t.layer, ItemKind::TEXT,
+            [&]( Acc& a )
+            {
+                size_t v0 = a.v.size();
+
+                if( !t.renderCache.empty() )
+                {
+                    for( const std::vector<Path>& glyph : t.renderCache )
+                        a.polygon( glyph );
+                }
+                else
+                {
+                    std::string text = m_board.ResolveText( t.text, t.footprint, t.layer );
+
+                    if( !text.empty() )
+                    {
+                        TextLayout L;
+                        L.pos = t.pos;
+                        L.sizeX = t.sizeX;
+                        L.sizeY = t.sizeY;
+                        L.thickness = t.thickness;
+                        L.angle = t.angle;
+                        L.lineSpacing = t.lineSpacing;
+                        L.mirror = t.mirror;
+                        L.italic = t.italic;
+                        L.hAlign = t.hAlign;
+                        L.vAlign = t.vAlign;
+
+                        std::vector<Path> strokes;
+                        StrokeFont::Get().Layout( text, L, strokes );
+
+                        for( const Path& s : strokes )
+                            a.polyline( s, t.thickness, false );
+                    }
+                }
+
+                for( size_t k = v0; k + 1 < a.v.size(); k += 2 )
+                    box.add( Pt( a.v[k], a.v[k + 1] ) );
+            } );
+}
+
+
+std::string ShortNetName( const std::string& aName )
+{
+    std::string s = aName;
+    size_t      slash = s.rfind( '/' );
+
+    if( slash != std::string::npos && slash + 1 < s.size() )
+        s = s.substr( slash + 1 );
+
+    auto replaceAll = [&]( const char* a, const char* b )
     {
-        for( const std::vector<Path>& glyph : t.renderCache )
-            a.polygon( glyph );
+        size_t      p = 0;
+        std::string from( a ), to( b );
 
+        while( ( p = s.find( from, p ) ) != std::string::npos )
+        {
+            s.replace( p, from.size(), to );
+            p += to.size();
+        }
+    };
+
+    replaceAll( "{slash}", "/" );
+    replaceAll( "{backslash}", "\\" );
+    replaceAll( "{colon}", ":" );
+    replaceAll( "{dblquote}", "\"" );
+    replaceAll( "{tab}", " " );
+    replaceAll( "{return}", " " );
+    return s;
+}
+
+
+void Builder::addLabel( int aLayer, const std::string& aText, const Pt& aCenter, double aAngle,
+                        double aMaxH, double aMaxW, bool aMirror )
+{
+    if( aLayer < 0 || aText.empty() || m_labelSlot[(size_t) aLayer] < 0 )
         return;
-    }
 
-    std::string text = m_board.ResolveText( t.text, t.footprint, t.layer );
-
-    if( text.empty() )
+    if( m_labelTriangles > LABEL_TRIANGLE_BUDGET )
         return;
 
-    TextLayout L;
-    L.pos = t.pos;
-    L.sizeX = t.sizeX;
-    L.sizeY = t.sizeY;
-    L.thickness = t.thickness;
-    L.angle = t.angle;
-    L.lineSpacing = t.lineSpacing;
-    L.mirror = t.mirror;
-    L.italic = t.italic;
-    L.hAlign = t.hAlign;
-    L.vAlign = t.vAlign;
-
+    // measure at size 1
+    TextLayout M;
+    M.sizeX = M.sizeY = 1.0;
+    M.thickness = 0.0;
     std::vector<Path> strokes;
-    StrokeFont::Get().Layout( text, L, strokes );
+    StrokeFont::Get().Layout( aText, M, strokes );
+
+    BBox ink;
 
     for( const Path& s : strokes )
-        a.polyline( s, t.thickness, false );
+    {
+        for( const Pt& q : s )
+            ink.add( q );
+    }
+
+    if( !ink.valid() )
+        return;
+
+    double w1 = std::max( ink.maxX - ink.minX, 0.3 );
+    double h1 = std::max( ink.maxY - ink.minY, 0.5 );
+    double size = std::min( aMaxH / h1, aMaxW / w1 );
+
+    if( size < 0.04 )
+        return;
+
+    // keep the text readable: angle in ]-90, 90]
+    double a = std::fmod( aAngle, 360.0 );
+
+    while( a > 90.0 )
+        a -= 180.0;
+
+    while( a <= -90.0 )
+        a += 180.0;
+
+    TextLayout L;
+    L.pos = aCenter;
+    L.sizeX = L.sizeY = size;
+    L.thickness = size * 0.13;
+    L.angle = a;
+    L.mirror = aMirror;
+
+    strokes.clear();
+    StrokeFont::Get().Layout( aText, L, strokes );
+
+    // Layout() anchors the ink box only approximately at the centre: re-centre exactly
+    BBox box;
+
+    for( const Path& s : strokes )
+    {
+        for( const Pt& q : s )
+            box.add( q );
+    }
+
+    Pt shift( aCenter.x - ( box.minX + box.maxX ) / 2, aCenter.y - ( box.minY + box.maxY ) / 2 );
+
+    for( Path& s : strokes )
+    {
+        for( Pt& q : s )
+            q = q + shift;
+    }
+
+    int bucket = size < 0.15 ? 0 : size < 0.3 ? 1 : size < 0.6 ? 2 : size < 1.2 ? 3 : 4;
+    Acc& acc_ = acc( m_labelSlot[(size_t) aLayer], (ItemKind) ( (int) ItemKind::LABEL0 + bucket ) );
+    size_t i0 = acc_.i.size();
+    acc_.strokeQuads( strokes, L.thickness );
+    m_labelTriangles += ( acc_.i.size() - i0 ) / 3;
+}
+
+
+void Builder::addLabels()
+{
+    const auto& layers = m_board.layers;
+    int         front = m_board.LayerIndex( "F.Cu" );
+    int         back = m_board.LayerIndex( "B.Cu" );
+
+    // ---- pads: number and net name
+    for( const Pad& p : m_board.pads )
+    {
+        bool onFront = false, onBack = false;
+
+        for( int l : p.layers )
+        {
+            if( l == front )
+                onFront = true;
+            else if( l == back )
+                onBack = true;
+        }
+
+        if( !onFront && !onBack )
+            continue;
+
+        std::string net = p.net > 0 && p.net < (int) m_board.nets.size()
+                                  ? ShortNetName( m_board.nets[(size_t) p.net] )
+                                  : std::string();
+        std::string text = p.number;
+
+        if( !net.empty() )
+            text = text.empty() ? net : text + "\n" + net;
+
+        if( text.empty() )
+            continue;
+
+        const PadGeom& g = p.geom;
+        double         sx = std::fabs( g.size.x ), sy = std::fabs( g.size.y );
+        double         along = std::max( sx, sy ), across = std::min( sx, sy );
+        double         angle = p.angle + ( sx >= sy ? 0.0 : 90.0 );
+        bool           round = g.shape == PadShape::CIRCLE || g.shape == PadShape::OVAL;
+        double         maxW = along * ( round ? 0.72 : 0.85 );
+        double         maxH = across * ( round ? 0.62 : 0.75 );
+
+        // a plated hole leaves only the annular ring: keep the label off the hole
+        if( p.drill.x > 0 && p.attr != PadAttr::NPTH )
+            maxH = std::min( maxH, across * 0.6 );
+
+        Pt c = p.pos + RotatePt( g.offset, p.angle );
+
+        if( onFront )
+            addLabel( front, text, c, angle, maxH, maxW, false );
+
+        if( onBack )
+            addLabel( back, text, c, angle, maxH, maxW, true );
+    }
+
+    // ---- tracks: net names, at most one per net/layer in each 10 mm cell
+    std::unordered_set<uint64_t> used;
+
+    for( const Track& t : m_board.tracks )
+    {
+        if( t.net <= 0 || t.layer < 0 || layers[(size_t) t.layer].kind != LayerKind::COPPER )
+            continue;
+
+        double dx = t.end.x - t.start.x, dy = t.end.y - t.start.y;
+        double len = std::hypot( dx, dy );
+
+        if( len < std::max( 2.0, 6.0 * t.width ) || t.width < 0.08 )
+            continue;
+
+        Pt       mid( ( t.start.x + t.end.x ) / 2, ( t.start.y + t.end.y ) / 2 );
+        int64_t  cx = (int64_t) std::floor( mid.x / 10.0 ) & 0xFFFF;
+        int64_t  cy = (int64_t) std::floor( mid.y / 10.0 ) & 0xFFFF;
+        uint64_t key = ( (uint64_t) ( t.net & 0xFFFFF ) << 44 ) | ( (uint64_t) ( t.layer & 0xFF ) << 36 )
+                       | ( (uint64_t) cx << 16 ) | (uint64_t) cy;
+
+        if( !used.insert( key ).second )
+            continue;
+
+        double angle = std::atan2( -dy, dx ) * 180.0 / PI;
+        bool   mirror = ( t.layer == back );
+        addLabel( t.layer, ShortNetName( m_board.nets[(size_t) t.net] ), mid, angle, t.width * 0.7,
+                  len * 0.6, mirror );
+    }
 }
 
 
@@ -738,22 +1003,53 @@ void Builder::Build()
         m_mesh.slots.push_back( h );
     }
 
+    // one label slot per copper layer (pad numbers, net names), drawn above everything
+    m_labelSlot.assign( layers.size(), -1 );
+
+    for( int l : m_board.copperStack )
+    {
+        const Layer& L = layers[(size_t) l];
+        Slot         s;
+        s.name = "Labels:" + L.canonical;
+        s.display = "Etiketler (" + L.display + ")";
+        s.kind = 10;
+        s.parentSlot = l;
+        s.viewSide = ( L.canonical == "B.Cu" ) ? -1 : 1;
+        s.sortFront = s.sortBack = 970 + L.copperOrder;
+        s.color = { 1.0f, 1.0f, 1.0f, 0.88f };
+        m_labelSlot[(size_t) l] = (int) m_mesh.slots.size();
+        m_mesh.slots.push_back( s );
+    }
+
     m_acc.assign( m_mesh.slots.size() * (size_t) ItemKind::COUNT, Acc() );
+    m_mesh.offsets.assign( (size_t) ItemType::COUNT, {} );
+    m_mesh.textBounds.assign( m_board.texts.size(), BBox() );
 
     auto isCopper = [&]( int l ) { return l >= 0 && layers[l].kind == LayerKind::COPPER; };
 
     // ---- tracks
     for( const Track& t : m_board.tracks )
-        acc( t.layer, ItemKind::TRACK ).capsule( t.start, t.end, t.width );
+    {
+        beginItem( ItemType::TRACK );
+        record( t.layer, ItemKind::TRACK, [&]( Acc& a ) { a.capsule( t.start, t.end, t.width ); } );
+    }
+
+    endType( ItemType::TRACK );
 
     for( const ArcTrack& t : m_board.arcs )
-        acc( t.layer, ItemKind::TRACK ).arcStroke( t.start, t.mid, t.end, t.width );
+    {
+        beginItem( ItemType::ARC );
+        record( t.layer, ItemKind::TRACK, [&]( Acc& a ) { a.arcStroke( t.start, t.mid, t.end, t.width ); } );
+    }
+
+    endType( ItemType::ARC );
 
     // ---- vias
     const std::vector<int>& stack = m_board.copperStack;
 
     for( const Via& v : m_board.vias )
     {
+        beginItem( ItemType::VIA );
         int oa = 0, ob = (int) stack.size() - 1;
 
         if( isCopper( v.layerA ) && isCopper( v.layerB ) )
@@ -780,7 +1076,7 @@ void Builder::Build()
                     size = os;
             }
 
-            acc( l, ItemKind::VIA ).circle( v.pos, size / 2 );
+            record( l, ItemKind::VIA, [&]( Acc& a ) { a.circle( v.pos, size / 2 ); } );
         }
 
         if( v.drill > 0 )
@@ -791,10 +1087,13 @@ void Builder::Build()
         }
     }
 
+    endType( ItemType::VIA );
+
     // ---- pads
     for( const Pad& p : m_board.pads )
     {
-        Acc defaultGeom;
+        beginItem( ItemType::PAD );
+        Acc  defaultGeom;
         bool haveDefault = false;
 
         for( int l : p.layers )
@@ -820,11 +1119,9 @@ void Builder::Build()
                 custom = true;
             }
 
-            Acc& target = acc( l, ItemKind::PAD );
-
             if( custom )
             {
-                padGeomToAcc( target, p, *g );
+                record( l, ItemKind::PAD, [&]( Acc& a ) { padGeomToAcc( a, p, *g ); } );
             }
             else
             {
@@ -834,7 +1131,7 @@ void Builder::Build()
                     haveDefault = true;
                 }
 
-                target.append( defaultGeom );
+                record( l, ItemKind::PAD, [&]( Acc& a ) { a.append( defaultGeom ); } );
             }
         }
 
@@ -852,10 +1149,13 @@ void Builder::Build()
         }
     }
 
+    endType( ItemType::PAD );
+
     // ---- zones (triangulated in parallel: this dominates the time on big boards)
     {
         struct Job
         {
+            size_t      zone;
             int         layer;
             const Path* poly;
             double      stroke;
@@ -864,8 +1164,10 @@ void Builder::Build()
 
         std::vector<Job> jobs;
 
-        for( const Zone& z : m_board.zones )
+        for( size_t zi = 0; zi < m_board.zones.size(); ++zi )
         {
+            const Zone& z = m_board.zones[zi];
+
             if( z.keepout )
                 continue;
 
@@ -875,7 +1177,7 @@ void Builder::Build()
                     continue;
 
                 for( const Path& poly : f.polys )
-                    jobs.push_back( { f.layer, &poly, z.strokeFill ? z.minThickness : 0.0, poly.size() } );
+                    jobs.push_back( { zi, f.layer, &poly, z.strokeFill ? z.minThickness : 0.0, poly.size() } );
             }
         }
 
@@ -926,23 +1228,47 @@ void Builder::Build()
         for( std::thread& t : threads )
             t.join();
 
-        for( size_t k = 0; k < jobs.size(); ++k )
+        size_t k = 0;
+
+        for( size_t zi = 0; zi < m_board.zones.size(); ++zi )
         {
-            acc( jobs[k].layer, ItemKind::ZONE ).append( results[k] );
-            results[k] = Acc(); // free memory early
+            beginItem( ItemType::ZONE );
+
+            for( ; k < jobs.size() && jobs[k].zone == zi; ++k )
+            {
+                record( jobs[k].layer, ItemKind::ZONE, [&]( Acc& a ) { a.append( results[k] ); } );
+                results[k] = Acc(); // free memory early
+            }
         }
+
+        endType( ItemType::ZONE );
     }
 
     // ---- graphics
     for( const Shape& s : m_board.shapes )
     {
+        beginItem( ItemType::SHAPE );
+
         if( s.layer >= 0 )
-            addShape( acc( s.layer, ItemKind::GRAPHIC ), s );
+            record( s.layer, ItemKind::GRAPHIC, [&]( Acc& a ) { addShape( a, s ); } );
     }
 
+    endType( ItemType::SHAPE );
+
     // ---- text
-    for( const Text& t : m_board.texts )
-        addText( t );
+    for( size_t i = 0; i < m_board.texts.size(); ++i )
+    {
+        beginItem( ItemType::TEXT );
+        addText( i, m_board.texts[i] );
+    }
+
+    endType( ItemType::TEXT );
+
+    // footprints own no geometry of their own (their children carry it)
+    m_mesh.offsets[(size_t) ItemType::FOOTPRINT].assign( 1, 0 );
+
+    // ---- pad numbers / net names
+    addLabels();
 
     // ---- merge in draw order
     std::vector<int> order( m_mesh.slots.size() );
@@ -953,10 +1279,15 @@ void Builder::Build()
     std::stable_sort( order.begin(), order.end(),
                       [&]( int a, int b ) { return m_mesh.slots[a].sortFront < m_mesh.slots[b].sortFront; } );
 
-    static const ItemKind kindOrder[] = { ItemKind::PAD,     ItemKind::VIA,       ItemKind::TRACK,
-                                          ItemKind::GRAPHIC, ItemKind::TEXT,      ItemKind::ZONE,
-                                          ItemKind::WALL_VIA, ItemKind::WALL_PTH, ItemKind::WALL_NPTH,
-                                          ItemKind::HOLE };
+    static const ItemKind kindOrder[] = { ItemKind::PAD,      ItemKind::VIA,       ItemKind::TRACK,
+                                          ItemKind::GRAPHIC,  ItemKind::TEXT,      ItemKind::ZONE,
+                                          ItemKind::WALL_VIA, ItemKind::WALL_PTH,  ItemKind::WALL_NPTH,
+                                          ItemKind::HOLE,     ItemKind::LABEL4,    ItemKind::LABEL3,
+                                          ItemKind::LABEL2,   ItemKind::LABEL1,    ItemKind::LABEL0 };
+
+    // a label bucket becomes visible when its smallest text is ~6.5 px tall
+    static const float labelMinZoom[] = { 6.5f / 0.06f, 6.5f / 0.15f, 6.5f / 0.3f, 6.5f / 0.6f,
+                                          6.5f / 1.2f };
 
     size_t totalV = 0, totalI = 0;
 
@@ -973,11 +1304,14 @@ void Builder::Build()
     const std::array<float, 4> wallNpth { 26 / 255.0f, 196 / 255.0f, 210 / 255.0f, 1.0f };
     const std::array<float, 4> wallVia { 236 / 255.0f, 236 / 255.0f, 236 / 255.0f, 1.0f };
 
+    std::vector<uint32_t> groupStart( m_acc.size(), 0 );
+
     for( int slot : order )
     {
         for( ItemKind k : kindOrder )
         {
-            Acc& a = acc( slot, k );
+            size_t id = accId( slot, k );
+            Acc&   a = m_acc[id];
 
             if( a.i.empty() )
                 continue;
@@ -996,9 +1330,13 @@ void Builder::Build()
             else if( k == ItemKind::HOLE )
                 g.color = BACKGROUND_COLOR;
 
+            if( k >= ItemKind::LABEL0 && k <= ItemKind::LABEL4 )
+                g.minZoom = labelMinZoom[(int) k - (int) ItemKind::LABEL0];
+
             uint32_t base = (uint32_t) ( m_mesh.vertices.size() / 2 );
             g.indexStart = (uint32_t) m_mesh.indices.size();
             g.indexCount = (uint32_t) a.i.size();
+            groupStart[id] = g.indexStart;
 
             m_mesh.vertices.insert( m_mesh.vertices.end(), a.v.begin(), a.v.end() );
 
@@ -1015,6 +1353,21 @@ void Builder::Build()
     }
 
     m_acc.clear();
+
+    // item ranges: local accumulator offsets -> global index positions
+    m_mesh.ranges.reserve( m_pending.size() );
+
+    for( const Pending& p : m_pending )
+    {
+        ItemRange r;
+        r.start = groupStart[p.acc] + p.start;
+        r.count = p.count;
+        r.slot = (int32_t) ( p.acc / (size_t) ItemKind::COUNT );
+        r.kind = (uint8_t) ( p.acc % (size_t) ItemKind::COUNT );
+        m_mesh.ranges.push_back( r );
+    }
+
+    std::vector<Pending>().swap( m_pending );
 
     // "Zoom to fit" shows everything, like KiCad (labels often sit outside the outline)
     m_mesh.bounds = m_board.ContentBBox();

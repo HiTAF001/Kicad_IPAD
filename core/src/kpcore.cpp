@@ -10,6 +10,7 @@
 
 #include "board.h"
 #include "mesh.h"
+#include "pick.h"
 #include "sexpr.h"
 
 #include <algorithm>
@@ -24,6 +25,10 @@ struct kp_board
     kp::Mesh  mesh;
     kp_stats  stats {};
     std::string strings[6];
+    std::string infoScratch;
+    std::vector<kp::ItemRange> rangeScratch;
+    kp_item     rangeKey { -1, -1, -1, -1, -1 };
+    int32_t     rangeWholeNet = -1;
 };
 
 static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
@@ -65,12 +70,6 @@ extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error
         kp::BuildMesh( b->board, b->mesh );
 
         auto t2 = clock::now();
-
-        // zone fill outlines are only needed for meshing; free them
-        for( kp::Zone& z : b->board.zones )
-        {
-            std::vector<kp::ZoneFill>().swap( z.fills );
-        }
 
         kp::BoardStats s = b->board.Stats();
         kp_stats&      o = b->stats;
@@ -185,6 +184,8 @@ extern "C" void kp_board_slot_info( const kp_board* board, int32_t slot, kp_slot
     out->a = s.color[3];
     out->default_visible = s.defaultVisible ? 1 : 0;
     out->index_count = s.indexCount;
+    out->parent_slot = s.parentSlot;
+    out->view_side = s.viewSide;
 }
 
 
@@ -226,6 +227,7 @@ extern "C" void kp_board_group( const kp_board* board, int32_t index, kp_group* 
     out->a = g.color[3];
     out->index_start = g.indexStart;
     out->index_count = g.indexCount;
+    out->min_zoom = g.minZoom;
 }
 
 
@@ -276,7 +278,198 @@ extern "C" void kp_board_bounds( const kp_board* board, double* min_x, double* m
 }
 
 
+static kp::PickFilter makeFilter( const uint8_t* vis, int32_t count, uint32_t hidden, int32_t flipped )
+{
+    kp::PickFilter f;
+    f.slotVisible = vis;
+    f.slotCount = count;
+    f.hiddenKinds = hidden;
+    f.flipped = flipped != 0;
+    return f;
+}
+
+
+extern "C" int32_t kp_board_pick( const kp_board* board, double x, double y, double tolerance,
+                                  const uint8_t* slot_visible, int32_t slot_count, uint32_t hidden_kinds,
+                                  int32_t flipped, kp_item* out, int32_t max_out )
+{
+    if( !board || !out || max_out <= 0 )
+        return 0;
+
+    std::vector<kp::PickHit> hits;
+    kp::Pick( board->board, board->mesh, kp::Pt( x, y ), tolerance,
+              makeFilter( slot_visible, slot_count, hidden_kinds, flipped ), hits );
+
+    int32_t n = 0;
+
+    for( const kp::PickHit& h : hits )
+    {
+        if( n >= max_out )
+            break;
+
+        out[n].type = (int32_t) h.type;
+        out[n].index = h.index;
+        out[n].footprint = h.footprint;
+        out[n].net = h.net;
+        out[n].layer = h.layer;
+        ++n;
+    }
+
+    return n;
+}
+
+
+extern "C" int32_t kp_board_snap( const kp_board* board, double x, double y, double tolerance,
+                                  const uint8_t* slot_visible, int32_t slot_count, double* out_x,
+                                  double* out_y )
+{
+    if( !board )
+        return 0;
+
+    kp::Pt p;
+
+    if( !kp::Snap( board->board, kp::Pt( x, y ), tolerance, makeFilter( slot_visible, slot_count, 0, 0 ), p ) )
+        return 0;
+
+    if( out_x )
+        *out_x = p.x;
+    if( out_y )
+        *out_y = p.y;
+
+    return 1;
+}
+
+
+extern "C" const char* kp_board_item_info( kp_board* board, const kp_item* item )
+{
+    if( !board || !item )
+        return "";
+
+    board->infoScratch = kp::ItemInfo( board->board, board->mesh, (kp::ItemType) item->type, item->index );
+    return board->infoScratch.c_str();
+}
+
+
+extern "C" const char* kp_board_net_info( kp_board* board, int32_t net )
+{
+    if( !board )
+        return "";
+
+    board->infoScratch = kp::NetInfo( board->board, net );
+    return board->infoScratch.c_str();
+}
+
+
+extern "C" int32_t kp_board_item_bounds( const kp_board* board, const kp_item* item, int32_t whole_net,
+                                         double* min_x, double* min_y, double* max_x, double* max_y )
+{
+    if( !board || !item )
+        return 0;
+
+    kp::BBox b = whole_net ? kp::NetBounds( board->board, item->net )
+                           : kp::ItemBounds( board->board, board->mesh, (kp::ItemType) item->type, item->index );
+
+    if( !b.valid() )
+        return 0;
+
+    if( min_x )
+        *min_x = b.minX;
+    if( min_y )
+        *min_y = b.minY;
+    if( max_x )
+        *max_x = b.maxX;
+    if( max_y )
+        *max_y = b.maxY;
+
+    return 1;
+}
+
+
+extern "C" int32_t kp_board_item_ranges( kp_board* board, const kp_item* item, int32_t whole_net,
+                                         kp_range* out, int32_t max_out )
+{
+    if( !board || !item )
+        return 0;
+
+    const kp_item& k = board->rangeKey;
+    bool same = k.type == item->type && k.index == item->index && k.net == item->net
+                && board->rangeWholeNet == whole_net;
+
+    if( !same )
+    {
+        kp::HighlightRanges( board->board, board->mesh, (kp::ItemType) item->type, item->index,
+                             whole_net != 0, item->net, board->rangeScratch );
+        board->rangeKey = *item;
+        board->rangeWholeNet = whole_net;
+    }
+
+    int32_t total = (int32_t) board->rangeScratch.size();
+
+    if( out )
+    {
+        for( int32_t i = 0; i < total && i < max_out; ++i )
+        {
+            const kp::ItemRange& r = board->rangeScratch[(size_t) i];
+            out[i].index_start = r.start;
+            out[i].index_count = r.count;
+            out[i].slot = r.slot;
+            out[i].kind = r.kind;
+        }
+    }
+
+    return total;
+}
+
+
+extern "C" int32_t kp_board_footprint_count( const kp_board* board )
+{
+    return board ? (int32_t) board->board.footprints.size() : 0;
+}
+
+
+extern "C" const char* kp_board_footprint_ref( const kp_board* board, int32_t index )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
+        return "";
+
+    return board->board.footprints[(size_t) index].reference.c_str();
+}
+
+
+extern "C" const char* kp_board_footprint_value( const kp_board* board, int32_t index )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
+        return "";
+
+    return board->board.footprints[(size_t) index].value.c_str();
+}
+
+
+extern "C" int32_t kp_board_footprint_back( const kp_board* board, int32_t index )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
+        return 0;
+
+    return board->board.footprints[(size_t) index].back ? 1 : 0;
+}
+
+
+extern "C" int32_t kp_board_net_count( const kp_board* board )
+{
+    return board ? (int32_t) board->board.nets.size() : 0;
+}
+
+
+extern "C" const char* kp_board_net_name( const kp_board* board, int32_t net )
+{
+    if( !board || net < 0 || net >= (int32_t) board->board.nets.size() )
+        return "";
+
+    return board->board.nets[(size_t) net].c_str();
+}
+
+
 extern "C" const char* kp_core_version( void )
 {
-    return "0.1.0";
+    return "0.2.0";
 }
