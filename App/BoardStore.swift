@@ -36,6 +36,8 @@ struct HighlightSpec: Equatable {
 struct FocusRequest: Equatable {
     var bounds: BoardBounds
     var id: Int
+    /// Keep the right side free for the selection card.
+    var reserveRight: Bool
 }
 
 @MainActor
@@ -384,11 +386,11 @@ final class BoardStore: ObservableObject {
         let wholeNet = sel.item.itemType == .nothing || (highlightWholeNet && sel.item.net > 0)
 
         if let b = board.bounds(of: sel.item, wholeNet: wholeNet) {
-            focus(on: b, minSize: wholeNet ? 5 : 3)
+            focus(on: b, minSize: wholeNet ? 5 : 3, reserveRight: true)
         }
     }
 
-    private func focus(on bounds: BoardBounds, minSize: Double) {
+    private func focus(on bounds: BoardBounds, minSize: Double, reserveRight: Bool = false) {
         var b = bounds
         let grow = max(0, minSize - b.width) / 2
         let growY = max(0, minSize - b.height) / 2
@@ -397,7 +399,7 @@ final class BoardStore: ObservableObject {
         b.minY -= growY
         b.maxY += growY
         focusCounter += 1
-        focusRequest = FocusRequest(bounds: b, id: focusCounter)
+        focusRequest = FocusRequest(bounds: b, id: focusCounter, reserveRight: reserveRight)
     }
 
     // MARK: - Measuring

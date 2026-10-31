@@ -87,7 +87,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     private var zoom: Double = 1
     private var fitZoom: Double = 1
     private var needsFit = true
-    private var pendingFocus: BoardBounds?
+    private var pendingFocus: FocusRequest?
 
     var onTap: (@MainActor (SIMD2<Double>, Double) -> Void)?
 
@@ -248,7 +248,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
         if let focus, focus.id != lastFocusID {
             lastFocusID = focus.id
-            pendingFocus = focus.bounds
+            pendingFocus = focus
             requestDraw()
         }
 
@@ -406,14 +406,34 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         needsFit = false
     }
 
-    private func applyFocus(_ b: BoardBounds, drawableSize size: CGSize) {
+    private func applyFocus(_ request: FocusRequest, drawableSize size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
 
+        let b = request.bounds
         let bw = max(b.width, 0.5)
         let bh = max(b.height, 0.5)
-        // leave room around the item (and for the info card)
-        zoom = clampZoom(min(Double(size.width) / (bw * 2.2), Double(size.height) / (bh * 2.2)))
-        center = SIMD2(b.midX, b.midY)
+
+        // Keep the right part of a wide screen for the selection card.
+        let scale = Double(view?.contentScaleFactor ?? 2)
+        var reserve = 0.0
+
+        if request.reserveRight && Double(size.width) > 700 * scale {
+            reserve = min(410 * scale, Double(size.width) * 0.42)
+        }
+
+        let availW = Double(size.width) - reserve
+
+        // small items get room around them; big ones (a whole net) nearly fill the view
+        var factor = 2.2
+
+        if let board {
+            let rel = max(bw / max(board.bounds.width, 1), bh / max(board.bounds.height, 1))
+            factor = rel > 0.35 ? 1.1 : 2.2
+        }
+
+        zoom = clampZoom(min(availW / (bw * factor), Double(size.height) / (bh * factor)))
+        // put the item in the middle of the free area
+        center = SIMD2(b.midX + (reserve / 2) / zoom * flipSign, b.midY)
     }
 
     private func clampZoom(_ z: Double) -> Double {

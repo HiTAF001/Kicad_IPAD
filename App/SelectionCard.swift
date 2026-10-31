@@ -11,30 +11,27 @@ struct SelectionCard: View {
     private var hasNet: Bool { selection.item.net > 0 }
     private var isNetOnly: Bool { selection.item.itemType == .nothing }
 
+    private var showsNetSection: Bool {
+        store.highlightWholeNet && !isNetOnly && selection.netInfo != nil
+    }
+
+    private var rowCount: Int {
+        selection.info.rows.count + (showsNetSection ? (selection.netInfo?.rows.count ?? 0) + 2 : 0)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(selection.info.rows) { row in
-                        InfoRowView(row: row)
-                    }
-
-                    if store.highlightWholeNet, !isNetOnly, let netInfo = selection.netInfo {
-                        Divider().padding(.vertical, 4)
-
-                        Text("Net: \(netInfo.title)")
-                            .font(.subheadline.weight(.semibold))
-
-                        ForEach(netInfo.rows) { row in
-                            InfoRowView(row: row)
-                        }
-                    }
-                }
-                .padding(14)
+            // short descriptions size to their content; long ones scroll in a fixed area
+            // (a bare ScrollView would stretch the card to the full screen height)
+            if rowCount <= 13 {
+                rows
+            } else {
+                ScrollView { rows }
+                    .frame(height: 380)
             }
 
             Divider()
@@ -42,9 +39,31 @@ struct SelectionCard: View {
             actions
         }
         .frame(maxWidth: 380)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.25)))
-        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .background(Color(uiColor: .systemBackground).opacity(0.97),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator)))
+        .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(selection.info.rows) { row in
+                InfoRowView(row: row)
+            }
+
+            if store.highlightWholeNet, !isNetOnly, let netInfo = selection.netInfo {
+                Divider().padding(.vertical, 4)
+
+                Text("Net: \(netInfo.title)")
+                    .font(.subheadline.weight(.semibold))
+
+                ForEach(netInfo.rows) { row in
+                    InfoRowView(row: row)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var header: some View {
@@ -59,7 +78,7 @@ struct SelectionCard: View {
 
                 Text(kindName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
             }
 
             Spacer()
@@ -69,7 +88,7 @@ struct SelectionCard: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Kapat")
@@ -150,12 +169,12 @@ private struct InfoRowView: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(row.key)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color(uiColor: .secondaryLabel))
                 .frame(width: 118, alignment: .leading)
 
             Text(row.value)
                 .font(.subheadline)
-                .textSelection(.enabled)
+                .foregroundStyle(Color(uiColor: .label))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -178,7 +197,7 @@ struct MeasureBar: View {
                 if store.measureSnapA || store.measureSnapB {
                     Text("pad/via merkezine tuttu")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
             } else if store.measureA != nil {
                 Text("İkinci noktaya dokun")
@@ -207,7 +226,7 @@ struct MeasureBar: View {
         .font(.callout)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
+        .background(Color(uiColor: .systemBackground).opacity(0.95), in: Capsule())
         .overlay(Capsule().stroke(Color.yellow.opacity(0.6)))
         .padding(.top, 10)
     }
