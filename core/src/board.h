@@ -14,6 +14,7 @@
 #define NETLOOM_BOARD_H
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -94,6 +95,7 @@ struct Layer
 {
     std::string canonical;  ///< e.g. "F.Cu"
     std::string display;    ///< user name if any, e.g. "top_layer"
+    std::string fileName;   ///< name items use for this layer in the file (custom in KiCad 4/5)
     LayerKind   kind = LayerKind::USER;
     int         side = 0;          ///< -1 = back, +1 = front, 0 = neither / inner
     int         copperOrder = -1;  ///< 0 = F.Cu, 1..n = inner, last = B.Cu (copper only)
@@ -121,6 +123,7 @@ struct Shape
     double    width = 0.0;     ///< stroke width (0 = no stroke)
     double    radius = 0.0;    ///< rectangle corner radius
     bool      filled = false;
+    bool      decoration = false; ///< part of a dimension or target marker, not real geometry
     int       layer = -1;
     int       footprint = -1;
     int         docItem = -1; ///< index of the top-level file item this came from
@@ -195,6 +198,13 @@ struct Pad
     int         footprint = -1;
     std::string pinFunction;
     std::string pinType;
+    double      localClearance = -1.0; ///< pad clearance override, -1 = none
+    double      maskMargin = NAN;      ///< solder mask expansion override (NaN = inherit)
+    double      pasteMargin = NAN;     ///< solder paste margin override
+    double      pasteRatio = NAN;      ///< solder paste margin ratio override
+    bool        castellated = false;
+    bool        removeUnused = false;  ///< no copper on layers where nothing connects
+    bool        keepEnd = false;       ///< ...except the outer layers
     int         docItem = -1; ///< index of the top-level file item this came from
 };
 
@@ -204,6 +214,7 @@ struct Track
     double width = 0.2;
     int    layer = -1;
     int    net = 0;
+    std::string uuid;
     int         docItem = -1; ///< index of the top-level file item this came from
 };
 
@@ -213,6 +224,7 @@ struct ArcTrack
     double width = 0.2;
     int    layer = -1;
     int    net = 0;
+    std::string uuid;
     int         docItem = -1; ///< index of the top-level file item this came from
 };
 
@@ -229,6 +241,11 @@ struct Via
     std::vector<std::pair<int, double>> sizeOverride; ///< per-layer size (padstack)
     double  innerSize = 0.0;
     int     net = 0;
+    bool    removeUnused = false; ///< no copper on layers where nothing connects
+    bool    keepEnd = false;      ///< ...except its outer layers
+    int8_t  tentFront = -1;       ///< covered by solder mask: 1 yes, 0 no, -1 board default
+    int8_t  tentBack = -1;
+    std::string uuid;
     int         docItem = -1; ///< index of the top-level file item this came from
 };
 
@@ -250,6 +267,7 @@ struct Zone
     int                   footprint = -1;
     double                minThickness = 0.0;
     bool                  strokeFill = false; ///< legacy zones: fill outlines drawn with min width
+    double                localClearance = -1.0; ///< zone clearance, -1 = none
     int         docItem = -1; ///< index of the top-level file item this came from
 };
 
@@ -265,6 +283,9 @@ struct Footprint
     int         padCount = 0;
     std::unordered_map<std::string, std::string> fields;
     std::vector<std::string> attrs;
+    double      localClearance = -1.0;          ///< clearance override for its pads, -1 = none
+    double      maskMargin = NAN, pasteMargin = NAN, pasteRatio = NAN; ///< overrides for its pads
+    std::vector<std::string> netTieGroups;      ///< e.g. "1,2": pads allowed to short
     BBox        localBox; ///< outline in the footprint frame (rotate by -angle around pos)
     int         docItem = -1; ///< index of the top-level file item this came from
 };
@@ -287,6 +308,22 @@ struct BoardStats
     double heightMM = 0.0;
 };
 
+/// Design rules stored in KiCad 4/5 board files (KiCad 6+ keeps them in the .kicad_pro).
+struct LegacyRules
+{
+    struct NetClass
+    {
+        std::string              name;
+        double                   clearance = -1, trackWidth = -1, viaDiameter = -1, viaDrill = -1;
+        double                   uviaDiameter = -1, uviaDrill = -1;
+        std::vector<std::string> nets;
+    };
+
+    std::vector<NetClass> netClasses;
+    double traceMin = -1, viaMinSize = -1, viaMinDrill = -1, uviaMinSize = -1, uviaMinDrill = -1;
+    double holeToHoleMin = -1, traceClearance = -1, edgeWidth = -1;
+};
+
 class Board
 {
 public:
@@ -298,6 +335,8 @@ public:
 
     std::vector<Layer>     layers;
     std::vector<std::string> nets; ///< index = internal net id, 0 = no net
+    std::vector<int>         netCode; ///< file net number per internal net (-1 = none)
+    bool                     netTable = false; ///< top-level "(net N name)" declarations present
 
     std::vector<Footprint> footprints;
     std::vector<Pad>       pads;
@@ -309,6 +348,17 @@ public:
     std::vector<Text>      texts;
 
     std::vector<std::string> warnings;
+    LegacyRules              legacyRules;
+
+    // fabrication setup
+    double padToMask = 0.0;          ///< default solder mask expansion
+    double maskMinWidth = 0.0;       ///< mask webs thinner than this are left out (openings merge)
+    double padToPaste = 0.0;         ///< default solder paste margin
+    double padToPasteRatio = 0.0;    ///< default solder paste margin ratio
+    bool   viasTentedFront = true;   ///< vias covered by solder mask (board default)
+    bool   viasTentedBack = true;
+    Pt     auxOrigin;                ///< drill/place file origin
+    bool   hasAuxOrigin = false;
 
     /// Copper layer indices in stack order (F.Cu first, B.Cu last).
     std::vector<int> copperStack;

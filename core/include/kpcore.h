@@ -272,6 +272,128 @@ int32_t kp_edit_set_track_width( kp_doc* doc, const kp_board* board, const kp_it
 int32_t kp_edit_set_via( kp_doc* doc, const kp_board* board, int32_t via, double size, double drill,
                          char* error, size_t error_size );
 
+/** Add one track on a copper layer slot (net = net index, 0 = none). */
+int32_t kp_edit_add_track( kp_doc* doc, const kp_board* board, double x1, double y1, double x2, double y2,
+                           double width, int32_t slot, int32_t net, char* error, size_t error_size );
+/** Add a through via. */
+int32_t kp_edit_add_via( kp_doc* doc, const kp_board* board, double x, double y, double size, double drill,
+                         int32_t net, char* error, size_t error_size );
+
+/** Net index by name, or -1. */
+int32_t kp_board_net_find( const kp_board* board, const char* name );
+/** Board layer of a slot (-1 for virtual slots) and the slot of a board layer (-1 if none). */
+int32_t kp_board_slot_layer( const kp_board* board, int32_t slot );
+int32_t kp_board_layer_slot( const kp_board* board, int32_t layer );
+
+/* ------------------------------------------------------------------------------------------
+ * Pencil routing. A route is built from a stroke on a board, shown as a preview, and committed
+ * to the document that board was built from.
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_route kp_route;
+
+enum
+{
+    KP_ANCHOR_NONE = 0,
+    KP_ANCHOR_PAD = 1,
+    KP_ANCHOR_VIA = 2,
+    KP_ANCHOR_TRACK_END = 3,
+    KP_ANCHOR_TRACK_MID = 4
+};
+
+typedef struct
+{
+    int32_t ok;             /**< geometry was produced */
+    int32_t blocked;        /**< must not be committed (see kp_route_message) */
+    int32_t net;
+    int32_t start_kind;     /**< KP_ANCHOR_* */
+    int32_t end_kind;
+    int32_t start_via;      /**< a via is added at the start / end (layer change) */
+    int32_t end_via;
+    int32_t shorts;         /**< touches copper of another net */
+    int32_t too_close;      /**< closer than the clearance to another net */
+    int32_t track_count;
+    int32_t via_count;
+    int32_t conflict_count;
+    double  length;         /**< total track length, mm */
+} kp_route_info;
+
+/** xy = x0,y0,x1,y1,... in mm. Distances in mm. */
+kp_route* kp_route_build( kp_board* board, const float* xy, int32_t point_count, int32_t slot, double width,
+                          double tolerance, double snap_radius, double via_size, double via_drill,
+                          double clearance );
+void         kp_route_free( kp_route* route );
+void         kp_route_get_info( const kp_route* route, kp_route_info* out );
+const char*  kp_route_message( const kp_route* route ); /**< empty if none */
+const float* kp_route_tracks( const kp_route* route, size_t* count );    /**< x1,y1,x2,y2 per track */
+const float* kp_route_vias( const kp_route* route, size_t* count );      /**< x,y,diameter per via */
+const float* kp_route_conflicts( const kp_route* route, size_t* count ); /**< x,y,shorts(0/1) each */
+const float* kp_route_anchors( const kp_route* route, size_t* count );   /**< x,y of start and end */
+int32_t      kp_edit_add_route( kp_doc* doc, const kp_board* board, const kp_route* route, char* error,
+                                size_t error_size );
+
+/* ------------------------------------------------------------------------------------------
+ * Design rule check.
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_drc kp_drc;
+
+enum
+{
+    KP_SEVERITY_ERROR = 0,
+    KP_SEVERITY_WARNING = 1
+};
+
+enum
+{
+    KP_RULES_DEFAULTS = 0, /**< KiCad's defaults */
+    KP_RULES_BOARD = 1,    /**< from the board file (KiCad 4/5) */
+    KP_RULES_PROJECT = 2   /**< from the .kicad_pro */
+};
+
+typedef struct
+{
+    int32_t code;     /**< check, see kp_drc_key() */
+    int32_t severity; /**< KP_SEVERITY_* */
+    double  x, y;     /**< marker position, mm */
+    int32_t layer_slot; /**< slot of the layer, -1 if not layer specific */
+    kp_item a, b;     /**< items involved (type KP_ITEM_NONE when absent) */
+    double  actual;   /**< measured value in mm, -1 = n/a */
+    double  required; /**< rule value in mm, -1 = n/a */
+} kp_drc_item;
+
+/** Run the checks. project_json: the .kicad_pro text next to the board, or NULL. */
+kp_drc*     kp_board_drc( const kp_board* board, const char* project_json, size_t project_length );
+/** Same, listing every problem of each track instead of the first one per track and layer. */
+kp_drc*     kp_board_drc_all( const kp_board* board, const char* project_json, size_t project_length );
+void        kp_drc_free( kp_drc* drc );
+int32_t     kp_drc_count( const kp_drc* drc );
+void        kp_drc_get( const kp_drc* drc, int32_t index, kp_drc_item* out );
+const char* kp_drc_message( const kp_drc* drc, int32_t index ); /**< translated one-line description */
+int32_t     kp_drc_error_count( const kp_drc* drc );
+int32_t     kp_drc_warning_count( const kp_drc* drc );
+int32_t     kp_drc_rules_source( const kp_drc* drc ); /**< KP_RULES_* */
+const char* kp_drc_note( const kp_drc* drc );         /**< e.g. why the project file was not used */
+double      kp_drc_ms( const kp_drc* drc );           /**< run time */
+int32_t     kp_drc_code_count( void );
+const char* kp_drc_key( int32_t code );               /**< KiCad name, e.g. "clearance" */
+const char* kp_drc_title( int32_t code );             /**< translated title */
+
+/* ------------------------------------------------------------------------------------------
+ * Fabrication outputs: Gerbers, drill files, BOM and placement, and a zip of them.
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_fab kp_fab;
+
+/** date: ISO 8601 (written into the files), may be NULL. */
+kp_fab*     kp_board_fab( const kp_board* board, const char* base_name, const char* date, int32_t use_aux_origin );
+void        kp_fab_free( kp_fab* fab );
+int32_t     kp_fab_ok( const kp_fab* fab );
+int32_t     kp_fab_file_count( const kp_fab* fab );
+const char* kp_fab_file_name( const kp_fab* fab, int32_t index );
+const char* kp_fab_file_kind( const kp_fab* fab, int32_t index ); /**< gerber, drill, bom, positions */
+const char* kp_fab_file_data( const kp_fab* fab, int32_t index, size_t* length );
+const char* kp_fab_zip( kp_fab* fab, size_t* length );           /**< all files, built on first call */
+int32_t     kp_fab_warning_count( const kp_fab* fab );
+const char* kp_fab_warning( const kp_fab* fab, int32_t index );
+
 const char* kp_core_version( void );
 
 #ifdef __cplusplus

@@ -401,6 +401,7 @@ private:
     void parseLayers( N aNode );
     void parseNetDecl( N aNode );
     void parseSetup( N aNode );
+    void parseNetClass( N aNode );
     void parseTitleBlock( N aNode );
     void parseFootprint( N aNode );
     void parseShape( N aNode, int aFootprint, const FpXform& aXf, std::vector<Shape>& aOut,
@@ -456,6 +457,7 @@ int BoardParser::layerRef( std::string_view aName, bool aWarn )
     if( describeLayer( name, L ) )
     {
         L.display = name;
+        L.fileName = name;
         m_board.layers.push_back( L );
         int idx = (int) m_board.layers.size() - 1;
         m_board.layerByName[name] = idx;
@@ -645,6 +647,8 @@ void BoardParser::Parse( const char* aData, size_t aLen )
                 parseLayers( item );
             else if( h == "setup" )
                 parseSetup( item );
+            else if( h == "net_class" )
+                parseNetClass( item );
             else if( h == "title_block" )
                 parseTitleBlock( item );
             else if( h == "net" )
@@ -671,7 +675,7 @@ void BoardParser::Parse( const char* aData, size_t aLen )
                 parseDimension( item, -1, noXf );
             else if( h == "target" )
                 parseTarget( item );
-            // ignored: page/paper, net_class, group, generated, image, table, barcode,
+            // ignored: page/paper, group, generated, image, table, barcode,
             // embedded_fonts, embedded_files, net_chains, variants, point, grid_item ...
         }
         catch( const std::exception& e )
@@ -697,6 +701,19 @@ void BoardParser::Parse( const char* aData, size_t aLen )
         m_board.layers[copper[k]].copperOrder = (int) k;
 
     m_board.copperStack = copper;
+
+    // file net numbers, used when writing new items
+    m_board.netCode.assign( m_board.nets.size(), -1 );
+
+    for( const auto& [number, idx] : m_board.netByNumber )
+    {
+        if( idx >= 0 && idx < (int) m_board.netCode.size()
+            && ( m_board.netCode[(size_t) idx] < 0 || number < m_board.netCode[(size_t) idx] ) )
+            m_board.netCode[(size_t) idx] = number;
+    }
+
+    if( !m_board.netCode.empty() )
+        m_board.netCode[0] = 0;
 }
 
 
@@ -734,6 +751,7 @@ void BoardParser::parseLayers( N aNode )
         }
 
         L.display = user.empty() ? L.canonical : user;
+        L.fileName = name;
 
         if( m_board.layerByName.count( L.canonical ) )
         {
@@ -755,6 +773,8 @@ void BoardParser::parseNetDecl( N aNode )
     // (net N "name")
     int         number = (int) aNode.num( 0 );
     std::string name( aNode.str( 1 ) );
+
+    m_board.netTable = true;
 
     if( number == 0 && name.empty() )
         return;
@@ -781,6 +801,104 @@ void BoardParser::parseSetup( N aNode )
 {
     if( N d = aNode.find( "via_drill" ) )
         m_defaultViaDrill = d.num( 0 );
+
+    LegacyRules& r = m_board.legacyRules;
+    auto         get = [&]( const char* aKey, double& aOut )
+    {
+        if( N n = aNode.find( aKey ) )
+            aOut = n.num( 0, -1.0 );
+    };
+
+    get( "trace_min", r.traceMin );
+    get( "via_min_size", r.viaMinSize );
+    get( "via_min_drill", r.viaMinDrill );
+    get( "uvia_min_size", r.uviaMinSize );
+    get( "uvia_min_drill", r.uviaMinDrill );
+    get( "hole_to_hole_min", r.holeToHoleMin );
+    get( "trace_clearance", r.traceClearance );
+    get( "edge_width", r.edgeWidth );
+
+    if( N n = aNode.find( "pad_to_mask_clearance" ) )
+        m_board.padToMask = n.num( 0, 0.0 );
+
+    if( N n = aNode.find( "solder_mask_min_width" ) )
+        m_board.maskMinWidth = n.num( 0, 0.0 );
+
+    if( N n = aNode.find( "pad_to_paste_clearance" ) )
+        m_board.padToPaste = n.num( 0, 0.0 );
+
+    if( N n = aNode.find( "pad_to_paste_clearance_ratio" ) )
+        m_board.padToPasteRatio = n.num( 0, 0.0 );
+
+    if( N n = aNode.find( "aux_axis_origin" ) )
+    {
+        m_board.auxOrigin = xy( n );
+        m_board.hasAuxOrigin = true;
+    }
+
+    if( N t = aNode.find( "tenting" ) )
+    {
+        // KiCad 8+: (tenting front back) | (tenting front) | (tenting none) | (tenting (front yes) (back yes))
+        bool front = false, back = false;
+
+        for( N a = t.arg( 0 ); a; a = a.next() )
+        {
+            if( a.isAtom() )
+            {
+                front |= a.text() == "front";
+                back |= a.text() == "back";
+            }
+            else if( a.head() == "front" )
+                front = a.str( 0 ) != "no";
+            else if( a.head() == "back" )
+                back = a.str( 0 ) != "no";
+        }
+
+        m_board.viasTentedFront = front;
+        m_board.viasTentedBack = back;
+    }
+    else if( N pp = aNode.find( "pcbplotparams" ) )
+    {
+        // KiCad 6/7: vias are tented unless plotted on the mask
+        if( N vm = pp.find( "viasonmask" ) )
+        {
+            bool open = vm.str( 0 ) == "true" || vm.str( 0 ) == "yes";
+            m_board.viasTentedFront = m_board.viasTentedBack = !open;
+        }
+    }
+}
+
+
+void BoardParser::parseNetClass( N aNode )
+{
+    // (net_class NAME "description" (clearance x) (trace_width x) ... (add_net "n") ...)
+    LegacyRules::NetClass nc;
+    nc.name = std::string( aNode.str( 0 ) );
+
+    for( N c = aNode.arg( 0 ); c; c = c.next() )
+    {
+        if( !c.isList() )
+            continue;
+
+        std::string_view k = c.head();
+
+        if( k == "clearance" )
+            nc.clearance = c.num( 0, -1.0 );
+        else if( k == "trace_width" )
+            nc.trackWidth = c.num( 0, -1.0 );
+        else if( k == "via_dia" )
+            nc.viaDiameter = c.num( 0, -1.0 );
+        else if( k == "via_drill" )
+            nc.viaDrill = c.num( 0, -1.0 );
+        else if( k == "uvia_dia" )
+            nc.uviaDiameter = c.num( 0, -1.0 );
+        else if( k == "uvia_drill" )
+            nc.uviaDrill = c.num( 0, -1.0 );
+        else if( k == "add_net" )
+            nc.nets.push_back( std::string( c.str( 0 ) ) );
+    }
+
+    m_board.legacyRules.netClasses.push_back( std::move( nc ) );
 }
 
 
@@ -1477,6 +1595,7 @@ void BoardParser::parseTextBox( N aNode, int aFootprint, const FpXform& aXf )
         s.footprint = aFootprint;
         m_board.shapes.push_back( s );
         m_board.shapes.back().docItem = m_curItem;
+        m_board.shapes.back().decoration = true;
     }
 
     double margin = t.sizeY * 0.75 + t.thickness; // KiCad default margin approximation
@@ -1557,6 +1676,27 @@ void BoardParser::parseFootprint( N aNode )
             for( N a = c.arg( 0 ); a; a = a.next() )
                 fp.attrs.push_back( std::string( a.text() ) );
         }
+        else if( k == "clearance" )
+        {
+            fp.localClearance = c.num( 0, -1.0 );
+        }
+        else if( k == "solder_mask_margin" )
+        {
+            fp.maskMargin = c.num( 0, 0.0 );
+        }
+        else if( k == "solder_paste_margin" )
+        {
+            fp.pasteMargin = c.num( 0, 0.0 );
+        }
+        else if( k == "solder_paste_margin_ratio" || k == "solder_paste_ratio" )
+        {
+            fp.pasteRatio = c.num( 0, 0.0 );
+        }
+        else if( k == "net_tie_pad_groups" )
+        {
+            for( N a = c.arg( 0 ); a; a = a.next() )
+                fp.netTieGroups.push_back( std::string( a.text() ) );
+        }
     }
 
     xf.pos = fp.pos;
@@ -1596,6 +1736,27 @@ void BoardParser::parseFootprint( N aNode )
             warn( TrF( "Footprint item skipped: {0}", { e.what() } ) );
         }
     }
+}
+
+
+static std::string itemUuid( N aNode )
+{
+    // KiCad 8+: (uuid "..."), KiCad 6/7: (tstamp ...)
+    if( N u = aNode.find( "uuid" ) )
+        return std::string( u.str( 0 ) );
+
+    if( N t = aNode.find( "tstamp" ) )
+        return std::string( t.str( 0 ) );
+
+    return std::string();
+}
+
+
+static bool flagValue( N aNode )
+{
+    // "(remove_unused_layers)" (KiCad 6/7) or "(remove_unused_layers yes)" (KiCad 8+)
+    N a = aNode.arg( 0 );
+    return !a || !( a.text() == "no" || a.text() == "false" );
 }
 
 
@@ -1778,6 +1939,34 @@ void BoardParser::parsePad( N aNode, int aFootprint, const FpXform& aXf )
         {
             p.net = netRef( c );
         }
+        else if( k == "clearance" )
+        {
+            p.localClearance = c.num( 0, -1.0 );
+        }
+        else if( k == "property" )
+        {
+            p.castellated = c.str( 0 ) == "pad_prop_castellated";
+        }
+        else if( k == "remove_unused_layers" )
+        {
+            p.removeUnused = flagValue( c );
+        }
+        else if( k == "solder_mask_margin" )
+        {
+            p.maskMargin = c.num( 0, 0.0 );
+        }
+        else if( k == "solder_paste_margin" )
+        {
+            p.pasteMargin = c.num( 0, 0.0 );
+        }
+        else if( k == "solder_paste_margin_ratio" || k == "solder_paste_ratio" )
+        {
+            p.pasteRatio = c.num( 0, 0.0 );
+        }
+        else if( k == "keep_end_layers" )
+        {
+            p.keepEnd = flagValue( c );
+        }
         else if( k == "pinfunction" )
         {
             p.pinFunction = std::string( c.str( 0 ) );
@@ -1865,6 +2054,7 @@ void BoardParser::parseTrack( N aNode )
     if( N n = aNode.find( "net" ) )
         t.net = netRef( n );
 
+    t.uuid = itemUuid( aNode );
     t.docItem = m_curItem;
 
     if( t.layer >= 0 )
@@ -1887,6 +2077,8 @@ void BoardParser::parseArc( N aNode )
 
     if( N n = aNode.find( "net" ) )
         a.net = netRef( n );
+
+    a.uuid = itemUuid( aNode );
 
     a.docItem = m_curItem;
 
@@ -1942,6 +2134,19 @@ void BoardParser::parseVia( N aNode )
         }
         else if( k == "net" )
             v.net = netRef( c );
+        else if( k == "remove_unused_layers" )
+            v.removeUnused = flagValue( c );
+        else if( k == "tenting" )
+        {
+            // (tenting (front yes) (back no)) or (tenting front back) / (tenting none)
+            if( N f = c.find( "front" ) )
+                v.tentFront = f.str( 0 ) == "no" ? 0 : 1;
+
+            if( N bk = c.find( "back" ) )
+                v.tentBack = bk.str( 0 ) == "no" ? 0 : 1;
+        }
+        else if( k == "keep_end_layers" )
+            v.keepEnd = flagValue( c );
         else if( k == "padstack" )
         {
             for( N L = c.arg( 0 ); L; L = L.next() )
@@ -1967,6 +2172,8 @@ void BoardParser::parseVia( N aNode )
 
     if( !aNode.find( "drill" ) && m_defaultViaDrill > 0 )
         v.drill = m_defaultViaDrill;
+
+    v.uuid = itemUuid( aNode );
 
     m_board.vias.push_back( v );
 
@@ -2019,6 +2226,11 @@ void BoardParser::parseZone( N aNode, int aFootprint, const FpXform& aXf )
             z.name = std::string( c.str( 0 ) );
         else if( k == "keepout" )
             z.keepout = true;
+        else if( k == "connect_pads" )
+        {
+            if( N cl = c.find( "clearance" ) )
+                z.localClearance = cl.num( 0, -1.0 );
+        }
         else if( k == "polygon" )
         {
             if( N pts = c.find( "pts" ) )
@@ -2148,6 +2360,7 @@ void BoardParser::parseDimension( N aNode, int aFootprint, const FpXform& aXf )
         s.footprint = aFootprint;
         m_board.shapes.push_back( s );
         m_board.shapes.back().docItem = m_curItem;
+        m_board.shapes.back().decoration = true;
     };
 
     auto arrow = [&]( Pt tip, Pt dir )
@@ -2273,6 +2486,7 @@ void BoardParser::parseTarget( N aNode )
     c.layer = layer;
     m_board.shapes.push_back( c );
     m_board.shapes.back().docItem = m_curItem;
+    m_board.shapes.back().decoration = true;
 
     double h = size / 2.0;
 
@@ -2291,6 +2505,7 @@ void BoardParser::parseTarget( N aNode )
         s.layer = layer;
         m_board.shapes.push_back( s );
         m_board.shapes.back().docItem = m_curItem;
+        m_board.shapes.back().decoration = true;
     }
 }
 

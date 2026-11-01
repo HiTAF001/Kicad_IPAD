@@ -40,6 +40,32 @@ bool SetFootprintField( EditTarget& t, int aFootprint, const std::string& aField
 bool SetTrackWidth( EditTarget& t, ItemType aType, int aIndex, double aWidth, std::string& aError );
 bool SetViaSize( EditTarget& t, int aVia, double aSize, double aDrill, std::string& aError );
 
+struct NewTrack
+{
+    Pt     start, end;
+    double width = 0.25;
+    int    layer = -1;
+    int    net = 0;
+};
+
+struct NewVia
+{
+    Pt     pos;
+    double size = 0.6;
+    double drill = 0.3;
+    int    layerA = -1; ///< -1 = outermost copper layers (through via)
+    int    layerB = -1;
+    int    net = 0;
+};
+
+/// Add tracks and vias in one undo step, written the way the file's KiCad version writes them.
+bool AddItems( EditTarget& t, const std::vector<NewTrack>& aTracks, const std::vector<NewVia>& aVias,
+               const std::string& aLabel, std::string& aError );
+
+/// Serialized forms (exposed for tests).
+std::string TrackText( const Board& aBoard, const NewTrack& aTrack );
+std::string ViaText( const Board& aBoard, const NewVia& aVia );
+
 /// KiCad style number formatting (up to 6 decimals, no trailing zeros).
 std::string FormatNumber( double aValue );
 

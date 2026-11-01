@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <random>
 
 namespace kp
 {
@@ -747,6 +748,225 @@ bool SetViaSize( EditTarget& t, int aVia, double size, double drill, std::string
 
     t.doc.Begin( TrF( "Via {0}/{1} mm", { FormatNumber( size ), FormatNumber( drill ) } ) );
     t.doc.Replace( di, applyPatches( tree.body, patches ) );
+    t.doc.Commit();
+    return true;
+}
+
+
+namespace
+{
+
+/// How the file's KiCad version writes board items.
+struct ItemStyle
+{
+    bool multiline = true;   ///< KiCad 8+: one token per line, tab indented
+    bool uuid = true;        ///< "(uuid "...")" (KiCad 8+), else "(tstamp ...)" (KiCad 6/7)
+    bool tstamp = false;
+    bool quoteLayers = true; ///< KiCad 6+ always quotes layer names
+    bool netNames = false;   ///< items refer to nets by name (KiCad 10+ files have no net table)
+};
+
+ItemStyle styleOf( const Board& b )
+{
+    ItemStyle s;
+    int       v = b.version;
+    s.multiline = v >= 20231100;
+    s.uuid = v >= 20231100;
+    s.tstamp = v >= 20200000 && v < 20231100;
+    s.quoteLayers = v >= 20200000;
+    s.netNames = !b.netTable && v >= 20251000;
+    return s;
+}
+
+std::string newUuid()
+{
+    static std::mt19937_64 rng( std::random_device {}() ^ 0x5eed5eedULL );
+    uint64_t hi = rng(), lo = rng();
+    hi = ( hi & 0xFFFFFFFFFFFF0FFFULL ) | 0x0000000000004000ULL; // version 4
+    lo = ( lo & 0x3FFFFFFFFFFFFFFFULL ) | 0x8000000000000000ULL; // variant 1
+    char buf[40];
+    snprintf( buf, sizeof( buf ), "%08x-%04x-%04x-%04x-%012llx", (unsigned) ( hi >> 32 ),
+              (unsigned) ( ( hi >> 16 ) & 0xFFFF ), (unsigned) ( hi & 0xFFFF ), (unsigned) ( lo >> 48 ),
+              (unsigned long long) ( lo & 0xFFFFFFFFFFFFULL ) );
+    return buf;
+}
+
+bool needsQuotes( const std::string& t )
+{
+    if( t.empty() )
+        return true;
+
+    for( char c : t )
+    {
+        if( c == ' ' || c == '(' || c == ')' || c == '"' || c == '\\' || c == '\t' || c == '\n' || c == '\r' )
+            return true;
+    }
+
+    return false;
+}
+
+std::string layerToken( const Board& b, const ItemStyle& st, int aLayer )
+{
+    const Layer& L = b.layers[(size_t) aLayer];
+    std::string  name = L.fileName.empty() ? L.canonical : L.fileName;
+    return st.quoteLayers || needsQuotes( name ) ? QuoteString( name ) : name;
+}
+
+std::string netToken( const Board& b, const ItemStyle& st, int aNet )
+{
+    if( st.netNames )
+        return "(net " + QuoteString( aNet > 0 && aNet < (int) b.nets.size() ? b.nets[(size_t) aNet] : "" ) + ")";
+
+    int code = aNet >= 0 && aNet < (int) b.netCode.size() ? b.netCode[(size_t) aNet] : -1;
+    return "(net " + std::to_string( code < 0 ? 0 : code ) + ")";
+}
+
+std::string assemble( const ItemStyle& st, const char* aHead, const std::vector<std::string>& aTokens )
+{
+    std::string out = std::string( "(" ) + aHead;
+
+    for( const std::string& tok : aTokens )
+        out += ( st.multiline ? "\n\t\t" : " " ) + tok;
+
+    out += st.multiline ? "\n\t)" : ")";
+    return out;
+}
+
+std::string idToken( const ItemStyle& st )
+{
+    if( st.uuid )
+        return "(uuid " + QuoteString( newUuid() ) + ")";
+
+    if( st.tstamp )
+        return "(tstamp " + newUuid() + ")";
+
+    return std::string();
+}
+
+std::string point( const char* aKey, const Pt& p )
+{
+    return std::string( "(" ) + aKey + " " + FormatNumber( p.x ) + " " + FormatNumber( p.y ) + ")";
+}
+
+} // anonymous namespace
+
+
+std::string TrackText( const Board& b, const NewTrack& tr )
+{
+    ItemStyle                st = styleOf( b );
+    std::vector<std::string> tok { point( "start", tr.start ), point( "end", tr.end ),
+                                   "(width " + FormatNumber( tr.width ) + ")",
+                                   "(layer " + layerToken( b, st, tr.layer ) + ")", netToken( b, st, tr.net ) };
+    std::string id = idToken( st );
+
+    if( !id.empty() )
+        tok.push_back( id );
+
+    return assemble( st, "segment", tok );
+}
+
+
+std::string ViaText( const Board& b, const NewVia& v )
+{
+    ItemStyle st = styleOf( b );
+    int       la = v.layerA, lb = v.layerB;
+
+    if( la < 0 || lb < 0 )
+    {
+        la = b.copperStack.empty() ? 0 : b.copperStack.front();
+        lb = b.copperStack.empty() ? 0 : b.copperStack.back();
+    }
+
+    std::vector<std::string> tok { point( "at", v.pos ), "(size " + FormatNumber( v.size ) + ")",
+                                   "(drill " + FormatNumber( v.drill ) + ")",
+                                   "(layers " + layerToken( b, st, la ) + " " + layerToken( b, st, lb ) + ")",
+                                   netToken( b, st, v.net ) };
+    std::string id = idToken( st );
+
+    if( !id.empty() )
+        tok.push_back( id );
+
+    bool through = b.copperStack.size() < 2
+                   || ( ( la == b.copperStack.front() && lb == b.copperStack.back() )
+                        || ( lb == b.copperStack.front() && la == b.copperStack.back() ) );
+    std::string head = through ? "via" : "via blind";
+    return assemble( st, head.c_str(), tok );
+}
+
+
+bool AddItems( EditTarget& t, const std::vector<NewTrack>& aTracks, const std::vector<NewVia>& aVias,
+               const std::string& aLabel, std::string& err )
+{
+    if( aTracks.empty() && aVias.empty() )
+    {
+        err = Tr( "Nothing to add" );
+        return false;
+    }
+
+    auto copperLayer = [&]( int l )
+    {
+        return l >= 0 && l < (int) t.board.layers.size() && t.board.layers[(size_t) l].kind == LayerKind::COPPER;
+    };
+
+    for( const NewTrack& tr : aTracks )
+    {
+        if( !copperLayer( tr.layer ) )
+        {
+            err = Tr( "Tracks can only be drawn on copper layers" );
+            return false;
+        }
+
+        if( tr.width <= 0 || tr.width > 100 )
+        {
+            err = Tr( "Invalid width" );
+            return false;
+        }
+    }
+
+    for( const NewVia& v : aVias )
+    {
+        if( v.size <= 0 || v.drill <= 0 || v.drill >= v.size )
+        {
+            err = Tr( "The hole must be smaller than the via diameter" );
+            return false;
+        }
+
+        if( t.board.copperStack.size() < 2 )
+        {
+            err = Tr( "A via needs at least two copper layers" );
+            return false;
+        }
+    }
+
+    std::string ws = t.doc.LastItemWhitespace();
+    size_t      nl = ws.rfind( '\n' );
+    ws = nl == std::string::npos ? std::string( "\n" ) + ws : ws.substr( nl );
+
+    t.doc.Begin( aLabel );
+    int added = 0;
+
+    for( const NewTrack& tr : aTracks )
+    {
+        if( std::hypot( tr.end.x - tr.start.x, tr.end.y - tr.start.y ) < 1e-6 )
+            continue;
+
+        t.doc.Append( TrackText( t.board, tr ), ws );
+        ++added;
+    }
+
+    for( const NewVia& v : aVias )
+    {
+        t.doc.Append( ViaText( t.board, v ), ws );
+        ++added;
+    }
+
+    if( added == 0 )
+    {
+        t.doc.Cancel();
+        err = Tr( "Nothing to add" );
+        return false;
+    }
+
     t.doc.Commit();
     return true;
 }

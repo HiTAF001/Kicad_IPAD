@@ -39,6 +39,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -626,6 +627,78 @@ static int cmdEdit( int argc, char** argv )
             printf( "via #%s %s/%s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
             i += 3;
         }
+        else if( op == "track" && i + 6 < argc + 0 )
+        {
+            // track X1 Y1 X2 Y2 WIDTH LAYER NET
+            int slot = -1;
+
+            for( int k = 0; k < kp_board_slot_count( b ); ++k )
+            {
+                if( !strcmp( kp_board_slot_name( b, k ), argv[i + 5] ) && kp_board_slot_layer( b, k ) >= 0 )
+                    slot = k;
+            }
+
+            int net = kp_board_net_find( b, argv[i + 6] );
+            ok = kp_edit_add_track( doc, b, atof( argv[i] ), atof( argv[i + 1] ), atof( argv[i + 2] ),
+                                    atof( argv[i + 3] ), atof( argv[i + 4] ), slot, net < 0 ? 0 : net, err,
+                                    sizeof( err ) );
+            printf( "track %s,%s-%s,%s %s %s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], argv[i + 3],
+                    argv[i + 5], argv[i + 6], ok ? "ok" : "FAILED", err );
+            i += 7;
+        }
+        else if( op == "addvia" && i + 4 < argc + 0 )
+        {
+            // addvia X Y SIZE DRILL NET
+            int net = kp_board_net_find( b, argv[i + 4] );
+            ok = kp_edit_add_via( doc, b, atof( argv[i] ), atof( argv[i + 1] ), atof( argv[i + 2] ),
+                                  atof( argv[i + 3] ), net < 0 ? 0 : net, err, sizeof( err ) );
+            printf( "addvia %s,%s %s: %s %s\n", argv[i], argv[i + 1], argv[i + 4], ok ? "ok" : "FAILED", err );
+            i += 5;
+        }
+        else if( op == "route" && i + 2 < argc + 0 )
+        {
+            // route LAYER WIDTH N x0 y0 ... (pencil stroke, N points), committed unless blocked
+            int slot = -1;
+
+            for( int k = 0; k < kp_board_slot_count( b ); ++k )
+            {
+                if( !strcmp( kp_board_slot_name( b, k ), argv[i] ) && kp_board_slot_layer( b, k ) >= 0 )
+                    slot = k;
+            }
+
+            double             width = atof( argv[i + 1] );
+            int                n = atoi( argv[i + 2] );
+            std::vector<float> xy;
+            i += 3;
+
+            for( int k = 0; k < 2 * n && i < argc; ++k )
+                xy.push_back( (float) atof( argv[i++] ) );
+
+            kp_route* r = kp_route_build( b, xy.data(), (int32_t) xy.size() / 2, slot, width, 0.3, 0.5, 0.6, 0.3, 0.2 );
+            kp_route_info info;
+            kp_route_get_info( r, &info );
+            static const char* kinds[] = { "none", "pad", "via", "track-end", "track-mid" };
+            printf( "route %s w=%g: ok=%d blocked=%d net=%s start=%s%s end=%s%s tracks=%d vias=%d len=%.3f "
+                    "shorts=%d close=%d msg='%s'\n",
+                    argv[i - 2 * n - 3], width, info.ok, info.blocked,
+                    info.net > 0 ? kp_board_net_name( b, info.net ) : "-", kinds[info.start_kind],
+                    info.start_via ? "+via" : "", kinds[info.end_kind], info.end_via ? "+via" : "",
+                    info.track_count, info.via_count, info.length, info.shorts, info.too_close, kp_route_message( r ) );
+            size_t       cnt = 0;
+            const float* t = kp_route_tracks( r, &cnt );
+
+            for( size_t k = 0; k + 3 < cnt; k += 4 )
+                printf( "  seg (%.6f, %.6f) -> (%.6f, %.6f)\n", t[k], t[k + 1], t[k + 2], t[k + 3] );
+
+            const float* c = kp_route_conflicts( r, &cnt );
+
+            for( size_t k = 0; k + 2 < cnt; k += 3 )
+                printf( "  conflict (%.3f, %.3f) %s\n", c[k], c[k + 1], c[k + 2] > 0 ? "short" : "clearance" );
+
+            ok = kp_edit_add_route( doc, b, r, err, sizeof( err ) );
+            printf( "  commit: %s %s\n", ok ? "ok" : "FAILED", err );
+            kp_route_free( r );
+        }
         else if( op == "undo" )
         {
             ok = kp_doc_undo( doc );
@@ -751,12 +824,132 @@ static void loadTranslations()
 }
 
 
+static int cmdDrc( int argc, char** argv )
+{
+    // drc <board> [--pro file.kicad_pro | --no-pro] [--quiet]
+    const char* path = argv[0];
+    std::string pro;
+    bool        quiet = false, noPro = false, all = false;
+    std::string proPath;
+
+    for( int i = 1; i < argc; ++i )
+    {
+        std::string a = argv[i];
+
+        if( a == "--pro" && i + 1 < argc )
+            proPath = argv[++i];
+        else if( a == "--no-pro" )
+            noPro = true;
+        else if( a == "--quiet" )
+            quiet = true;
+        else if( a == "--all" )
+            all = true;
+    }
+
+    if( proPath.empty() && !noPro )
+    {
+        std::string p = path;
+
+        if( p.size() > 10 && p.compare( p.size() - 10, 10, ".kicad_pcb" ) == 0 )
+            proPath = p.substr( 0, p.size() - 10 ) + ".kicad_pro";
+    }
+
+    if( !proPath.empty() && !readFile( proPath.c_str(), pro ) )
+        pro.clear();
+
+    kp_board* b = load( path );
+
+    if( !b )
+        return 1;
+
+    kp_drc* d = ( all ? kp_board_drc_all : kp_board_drc )( b, pro.empty() ? nullptr : pro.data(), pro.size() );
+    int     n = kp_drc_count( d );
+    std::map<std::string, int> counts;
+
+    for( int i = 0; i < n; ++i )
+    {
+        kp_drc_item it;
+        kp_drc_get( d, i, &it );
+        counts[kp_drc_key( it.code )]++;
+
+        if( !quiet )
+            printf( "%-22s %s (%.4f, %.4f) actual=%.4f req=%.4f | %s\n", kp_drc_key( it.code ),
+                    it.severity == KP_SEVERITY_ERROR ? "E" : "W", it.x, it.y, it.actual, it.required,
+                    kp_drc_message( d, i ) );
+    }
+
+    static const char* src[] = { "defaults", "board", "project" };
+    printf( "summary rules=%s errors=%d warnings=%d time=%.1fms note='%s'\n", src[kp_drc_rules_source( d )],
+            kp_drc_error_count( d ), kp_drc_warning_count( d ), kp_drc_ms( d ), kp_drc_note( d ) );
+
+    for( const auto& [k, c] : counts )
+        printf( "count %s %d\n", k.c_str(), c );
+
+    kp_drc_free( d );
+    kp_board_free( b );
+    return 0;
+}
+
+
+static int cmdFab( int argc, char** argv )
+{
+    // fab <board> <outdir> [--aux]
+    const char* path = argv[0];
+    std::string dir = argv[1];
+    bool        aux = argc > 2 && !strcmp( argv[2], "--aux" );
+    kp_board*   b = load( path );
+
+    if( !b )
+        return 1;
+
+    std::string base = path;
+    size_t      slash = base.find_last_of( '/' );
+
+    if( slash != std::string::npos )
+        base = base.substr( slash + 1 );
+
+    if( base.size() > 10 && base.compare( base.size() - 10, 10, ".kicad_pcb" ) == 0 )
+        base.resize( base.size() - 10 );
+
+    kp_fab* f = kp_board_fab( b, base.c_str(), "2026-11-01T12:00:00+03:00", aux ? 1 : 0 );
+
+    for( int i = 0; i < kp_fab_file_count( f ); ++i )
+    {
+        size_t      len = 0;
+        const char* data = kp_fab_file_data( f, i, &len );
+        std::string out = dir + "/" + kp_fab_file_name( f, i );
+        std::ofstream o( out, std::ios::binary );
+        o.write( data, (std::streamsize) len );
+        printf( "%-9s %8zu %s\n", kp_fab_file_kind( f, i ), len, kp_fab_file_name( f, i ) );
+    }
+
+    size_t      zl = 0;
+    const char* z = kp_fab_zip( f, &zl );
+    std::ofstream zo( dir + "/" + base + "-fab.zip", std::ios::binary );
+    zo.write( z, (std::streamsize) zl );
+    printf( "zip       %8zu %s-fab.zip  ok=%d\n", zl, base.c_str(), kp_fab_ok( f ) );
+
+    for( int i = 0; i < kp_fab_warning_count( f ); ++i )
+        printf( "warning: %s\n", kp_fab_warning( f, i ) );
+
+    kp_fab_free( f );
+    kp_board_free( b );
+    return 0;
+}
+
+
 int main( int argc, char** argv )
 {
     loadTranslations();
 
     if( argc >= 4 && !strcmp( argv[1], "edit" ) )
         return cmdEdit( argc - 2, argv + 2 );
+
+    if( argc >= 4 && !strcmp( argv[1], "fab" ) )
+        return cmdFab( argc - 2, argv + 2 );
+
+    if( argc >= 3 && !strcmp( argv[1], "drc" ) )
+        return cmdDrc( argc - 2, argv + 2 );
 
     if( argc >= 3 && !strcmp( argv[1], "stats" ) )
         return cmdStats( argv[2] );
@@ -773,6 +966,7 @@ int main( int argc, char** argv )
     fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli check <files...>\n  kpcli pick <file> <x> <y> [tol]\n"
                      "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n"
                      "  kpcli edit <in> <out> ops... (move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |\n"
-                     "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | undo | redo)\n" );
+                     "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | track X1 Y1 X2 Y2 W LAYER NET |\n"
+                     "             addvia X Y SIZE DRILL NET | undo | redo)\n" );
     return 2;
 }

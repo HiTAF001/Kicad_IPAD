@@ -18,6 +18,11 @@ add_library( kpcore STATIC
     core/src/connectivity.cpp
     core/src/document.cpp
     core/src/edit.cpp
+    core/src/geom.cpp
+    core/src/json.cpp
+    core/src/drc.cpp
+    core/src/fab.cpp
+    core/src/route.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
 )

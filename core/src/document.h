@@ -52,7 +52,10 @@ public:
     void Begin( const std::string& aLabel );
     void Replace( int aIndex, const std::string& aBody );
     void Remove( int aIndex );
-    int  Append( const std::string& aBody );
+    int  Append( const std::string& aBody, const std::string& aWhitespace = "\n\t" );
+
+    /// Whitespace in front of the last present item (to indent appended items alike).
+    std::string LastItemWhitespace() const;
     void Commit();
     void Cancel();
 

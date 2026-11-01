@@ -13,13 +13,19 @@
 #include "mesh.h"
 #include "pick.h"
 #include "connectivity.h"
+#include "drc.h"
+#include "fab.h"
 #include "document.h"
 #include "edit.h"
+#include "geom.h"
+#include "route.h"
 #include "sexpr.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <string>
 #include <unordered_map>
@@ -38,6 +44,26 @@ struct kp_board
     std::vector<int>   docMap;     // parse index -> document item (boards built from a kp_doc)
     const void*        docOwner = nullptr;
     uint64_t           docState = 0;
+    std::unique_ptr<kp::CopperIndex> copper; // built on first use (routing, checks)
+
+    const kp::CopperIndex& Copper()
+    {
+        if( !copper )
+        {
+            copper = std::make_unique<kp::CopperIndex>();
+            copper->Build( board );
+        }
+
+        return *copper;
+    }
+};
+
+struct kp_route
+{
+    kp::RouteResult    result;
+    const kp_board*    board = nullptr;
+    uint64_t           boardState = 0;
+    std::vector<float> tracks, vias, conflicts, anchors;
 };
 
 struct kp_doc
@@ -162,7 +188,7 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
     }
     catch( const std::exception& e )
     {
-        copyError( error, error_size, std::string( "Hata: " ) + e.what() );
+        copyError( error, error_size, kp::TrF( "Error: {0}", { e.what() } ) );
         delete b;
         return nullptr;
     }
@@ -841,7 +867,500 @@ extern "C" int32_t kp_edit_set_via( kp_doc* doc, const kp_board* board, int32_t 
 }
 
 
+extern "C" int32_t kp_board_net_find( const kp_board* board, const char* name )
+{
+    if( !board || !name )
+        return -1;
+
+    auto it = board->board.netByName.find( name );
+    return it == board->board.netByName.end() ? -1 : it->second;
+}
+
+
+extern "C" int32_t kp_board_slot_layer( const kp_board* board, int32_t slot )
+{
+    if( !board || slot < 0 || slot >= (int32_t) board->mesh.slots.size() )
+        return -1;
+
+    return board->mesh.slots[(size_t) slot].layer;
+}
+
+
+extern "C" int32_t kp_board_layer_slot( const kp_board* board, int32_t layer )
+{
+    if( !board || layer < 0 )
+        return -1;
+
+    for( size_t i = 0; i < board->mesh.slots.size(); ++i )
+    {
+        if( board->mesh.slots[i].layer == layer )
+            return (int32_t) i;
+    }
+
+    return -1;
+}
+
+
+extern "C" int32_t kp_edit_add_track( kp_doc* doc, const kp_board* board, double x1, double y1, double x2,
+                                      double y2, double width, int32_t slot, int32_t net, char* error,
+                                      size_t error_size )
+{
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    {
+                        kp::NewTrack tr;
+                        tr.start = kp::Pt( x1, y1 );
+                        tr.end = kp::Pt( x2, y2 );
+                        tr.width = width;
+                        tr.layer = kp_board_slot_layer( board, slot );
+                        tr.net = net;
+                        return kp::AddItems( t, { tr }, {}, kp::Tr( "Add track" ), err );
+                    } );
+}
+
+
+extern "C" int32_t kp_edit_add_via( kp_doc* doc, const kp_board* board, double x, double y, double size,
+                                    double drill, int32_t net, char* error, size_t error_size )
+{
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    {
+                        kp::NewVia v;
+                        v.pos = kp::Pt( x, y );
+                        v.size = size;
+                        v.drill = drill;
+                        v.net = net;
+                        return kp::AddItems( t, {}, { v }, kp::Tr( "Add via" ), err );
+                    } );
+}
+
+
+extern "C" kp_route* kp_route_build( kp_board* board, const float* xy, int32_t point_count, int32_t slot,
+                                     double width, double tolerance, double snap_radius, double via_size,
+                                     double via_drill, double clearance )
+{
+    if( !board || !xy || point_count < 1 )
+        return nullptr;
+
+    kp_route* r = new( std::nothrow ) kp_route();
+
+    if( !r )
+        return nullptr;
+
+    try
+    {
+        kp::RouteRequest req;
+        req.stroke.reserve( (size_t) point_count );
+
+        for( int32_t i = 0; i < point_count; ++i )
+            req.stroke.push_back( kp::Pt( xy[2 * i], xy[2 * i + 1] ) );
+
+        req.layer = kp_board_slot_layer( board, slot );
+        req.width = width;
+        req.tolerance = tolerance;
+        req.snapRadius = snap_radius;
+        req.viaSize = via_size;
+        req.viaDrill = via_drill;
+        req.clearance = clearance;
+        r->result = kp::RoutePencil( board->board, board->Copper(), req );
+        r->board = board;
+        r->boardState = board->docState;
+
+        for( const kp::NewTrack& t : r->result.tracks )
+            r->tracks.insert( r->tracks.end(), { (float) t.start.x, (float) t.start.y, (float) t.end.x, (float) t.end.y } );
+
+        for( const kp::NewVia& v : r->result.vias )
+            r->vias.insert( r->vias.end(), { (float) v.pos.x, (float) v.pos.y, (float) v.size } );
+
+        for( const kp::RouteConflict& c : r->result.conflicts )
+            r->conflicts.insert( r->conflicts.end(), { (float) c.pos.x, (float) c.pos.y, c.shorts ? 1.0f : 0.0f } );
+
+        if( !r->result.tracks.empty() )
+        {
+            const kp::Pt& a = r->result.tracks.front().start;
+            const kp::Pt& b = r->result.tracks.back().end;
+            r->anchors = { (float) a.x, (float) a.y, (float) b.x, (float) b.y };
+        }
+    }
+    catch( const std::exception& e )
+    {
+        r->result = kp::RouteResult();
+        r->result.message = e.what();
+    }
+
+    return r;
+}
+
+
+extern "C" void kp_route_free( kp_route* route )
+{
+    delete route;
+}
+
+
+static kp::AnchorKind anchorKindOr( const kp::Anchor& a ) { return a.kind; }
+
+extern "C" void kp_route_get_info( const kp_route* route, kp_route_info* out )
+{
+    if( !out )
+        return;
+
+    *out = kp_route_info {};
+
+    if( !route )
+        return;
+
+    const kp::RouteResult& r = route->result;
+    out->ok = r.ok ? 1 : 0;
+    out->blocked = r.blocked ? 1 : 0;
+    out->net = r.net;
+    out->start_kind = (int32_t) anchorKindOr( r.start );
+    out->end_kind = (int32_t) anchorKindOr( r.end );
+    out->start_via = r.start.needsVia ? 1 : 0;
+    out->end_via = r.end.needsVia ? 1 : 0;
+    out->shorts = r.shorts ? 1 : 0;
+    out->too_close = r.tooClose ? 1 : 0;
+    out->track_count = (int32_t) r.tracks.size();
+    out->via_count = (int32_t) r.vias.size();
+    out->conflict_count = (int32_t) r.conflicts.size();
+
+    for( const kp::NewTrack& t : r.tracks )
+        out->length += std::hypot( t.end.x - t.start.x, t.end.y - t.start.y );
+}
+
+
+extern "C" const char* kp_route_message( const kp_route* route )
+{
+    return route ? route->result.message.c_str() : "";
+}
+
+
+static const float* floatsOf( const std::vector<float>& v, size_t* count )
+{
+    if( count )
+        *count = v.size();
+
+    return v.empty() ? nullptr : v.data();
+}
+
+extern "C" const float* kp_route_tracks( const kp_route* route, size_t* count )
+{
+    static const std::vector<float> none;
+    return floatsOf( route ? route->tracks : none, count );
+}
+
+extern "C" const float* kp_route_vias( const kp_route* route, size_t* count )
+{
+    static const std::vector<float> none;
+    return floatsOf( route ? route->vias : none, count );
+}
+
+extern "C" const float* kp_route_conflicts( const kp_route* route, size_t* count )
+{
+    static const std::vector<float> none;
+    return floatsOf( route ? route->conflicts : none, count );
+}
+
+extern "C" const float* kp_route_anchors( const kp_route* route, size_t* count )
+{
+    static const std::vector<float> none;
+    return floatsOf( route ? route->anchors : none, count );
+}
+
+
+extern "C" int32_t kp_edit_add_route( kp_doc* doc, const kp_board* board, const kp_route* route, char* error,
+                                      size_t error_size )
+{
+    if( !route || !route->result.ok )
+    {
+        copyError( error, error_size, route ? route->result.message : std::string( kp::Tr( "No route" ) ) );
+        return 0;
+    }
+
+    if( route->result.blocked )
+    {
+        copyError( error, error_size, route->result.message );
+        return 0;
+    }
+
+    if( route->board != board || route->boardState != board->docState )
+    {
+        copyError( error, error_size, kp::Tr( "The board view is not up to date yet; wait a moment and try again" ) );
+        return 0;
+    }
+
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    {
+                        std::string label = route->result.net > 0
+                                                    ? kp::TrF( "Draw track ({0})", { board->board.nets[(size_t) route->result.net] } )
+                                                    : std::string( kp::Tr( "Draw track" ) );
+                        return kp::AddItems( t, route->result.tracks, route->result.vias, label, err );
+                    } );
+}
+
+
+struct kp_drc
+{
+    std::vector<kp::DrcItem> items;
+    std::vector<kp_item>     refs;   // a, b per item
+    std::vector<int32_t>     slots;  // layer slot per item
+    std::vector<std::string> messages;
+    std::string              note;
+    int32_t                  errors = 0, warnings = 0, source = 0;
+    double                   ms = 0;
+};
+
+
+static void fillItem( const kp::Board& b, const kp::DrcRef& r, kp_item& out )
+{
+    out = kp_item { 0, -1, -1, 0, -1 };
+
+    if( r.type == kp::ItemType::NONE || r.index < 0 )
+        return;
+
+    out.type = (int32_t) r.type;
+    out.index = r.index;
+
+    switch( r.type )
+    {
+    case kp::ItemType::PAD:
+        out.footprint = b.pads[(size_t) r.index].footprint;
+        out.net = b.pads[(size_t) r.index].net;
+        break;
+    case kp::ItemType::VIA: out.net = b.vias[(size_t) r.index].net; break;
+    case kp::ItemType::TRACK: out.net = b.tracks[(size_t) r.index].net; break;
+    case kp::ItemType::ARC: out.net = b.arcs[(size_t) r.index].net; break;
+    case kp::ItemType::ZONE:
+        out.net = b.zones[(size_t) r.index].net;
+        out.footprint = b.zones[(size_t) r.index].footprint;
+        break;
+    case kp::ItemType::SHAPE: out.footprint = b.shapes[(size_t) r.index].footprint; break;
+    case kp::ItemType::FOOTPRINT: out.footprint = r.index; break;
+    default: break;
+    }
+}
+
+
+static kp_drc* runDrc( const kp_board* board, const char* project_json, size_t project_length, bool all );
+
+extern "C" kp_drc* kp_board_drc( const kp_board* board, const char* project_json, size_t project_length )
+{
+    return runDrc( board, project_json, project_length, false );
+}
+
+
+extern "C" kp_drc* kp_board_drc_all( const kp_board* board, const char* project_json, size_t project_length )
+{
+    return runDrc( board, project_json, project_length, true );
+}
+
+
+static kp_drc* runDrc( const kp_board* board, const char* project_json, size_t project_length, bool all )
+{
+    if( !board )
+        return nullptr;
+
+    kp_drc* d = new( std::nothrow ) kp_drc();
+
+    if( !d )
+        return nullptr;
+
+    try
+    {
+        auto             t0 = std::chrono::steady_clock::now();
+        kp::DesignRules  rules = kp::ResolveRules( board->board, project_json, project_length, d->note );
+        rules.reportAllTrackErrors = all;
+        kp::Connectivity conn;
+        kp::ComputeConnectivity( board->board, conn );
+        kp::RunDrc( board->board, rules, conn, d->items );
+        d->source = (int32_t) rules.source;
+
+        for( const kp::DrcItem& it : d->items )
+        {
+            kp_item a, b;
+            fillItem( board->board, it.a, a );
+            fillItem( board->board, it.b, b );
+            d->refs.push_back( a );
+            d->refs.push_back( b );
+            d->slots.push_back( it.layer >= 0 ? kp_board_layer_slot( board, it.layer ) : -1 );
+            d->messages.push_back( kp::DrcMessage( board->board, it ) );
+            ( it.severity == kp::Severity::ERROR ? d->errors : d->warnings )++;
+        }
+
+        d->ms = std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - t0 ).count();
+    }
+    catch( const std::exception& e )
+    {
+        d->items.clear();
+        d->messages.clear();
+        d->note = e.what();
+    }
+
+    return d;
+}
+
+
+extern "C" void kp_drc_free( kp_drc* drc )
+{
+    delete drc;
+}
+
+
+extern "C" int32_t kp_drc_count( const kp_drc* drc )
+{
+    return drc ? (int32_t) drc->items.size() : 0;
+}
+
+
+extern "C" void kp_drc_get( const kp_drc* drc, int32_t index, kp_drc_item* out )
+{
+    if( !drc || !out || index < 0 || index >= (int32_t) drc->items.size() )
+        return;
+
+    const kp::DrcItem& it = drc->items[(size_t) index];
+    *out = kp_drc_item {};
+    out->code = (int32_t) it.code;
+    out->severity = it.severity == kp::Severity::ERROR ? KP_SEVERITY_ERROR : KP_SEVERITY_WARNING;
+    out->x = it.pos.x;
+    out->y = it.pos.y;
+    out->layer_slot = drc->slots[(size_t) index];
+    out->a = drc->refs[(size_t) index * 2];
+    out->b = drc->refs[(size_t) index * 2 + 1];
+    out->actual = it.actual;
+    out->required = it.required;
+}
+
+
+extern "C" const char* kp_drc_message( const kp_drc* drc, int32_t index )
+{
+    if( !drc || index < 0 || index >= (int32_t) drc->messages.size() )
+        return "";
+
+    return drc->messages[(size_t) index].c_str();
+}
+
+
+extern "C" int32_t kp_drc_error_count( const kp_drc* drc ) { return drc ? drc->errors : 0; }
+extern "C" int32_t kp_drc_warning_count( const kp_drc* drc ) { return drc ? drc->warnings : 0; }
+extern "C" int32_t kp_drc_rules_source( const kp_drc* drc ) { return drc ? drc->source : 0; }
+extern "C" const char* kp_drc_note( const kp_drc* drc ) { return drc ? drc->note.c_str() : ""; }
+extern "C" double kp_drc_ms( const kp_drc* drc ) { return drc ? drc->ms : 0.0; }
+extern "C" int32_t kp_drc_code_count( void ) { return (int32_t) kp::DrcCode::COUNT; }
+
+extern "C" const char* kp_drc_key( int32_t code )
+{
+    return code >= 0 && code < (int32_t) kp::DrcCode::COUNT ? kp::DrcKey( (kp::DrcCode) code ) : "";
+}
+
+extern "C" const char* kp_drc_title( int32_t code )
+{
+    return code >= 0 && code < (int32_t) kp::DrcCode::COUNT ? kp::Tr( kp::DrcTitle( (kp::DrcCode) code ) ) : "";
+}
+
+
+struct kp_fab
+{
+    std::vector<kp::FabFile> files;
+    std::vector<std::string> warnings;
+    std::string              zip, date;
+    bool                     ok = false;
+};
+
+
+extern "C" kp_fab* kp_board_fab( const kp_board* board, const char* base_name, const char* date, int32_t use_aux_origin )
+{
+    if( !board )
+        return nullptr;
+
+    kp_fab* f = new( std::nothrow ) kp_fab();
+
+    if( !f )
+        return nullptr;
+
+    try
+    {
+        kp::FabOptions o;
+
+        if( base_name && *base_name )
+            o.baseName = base_name;
+
+        if( date )
+            o.date = date;
+
+        o.version = kp_core_version();
+        o.useAuxOrigin = use_aux_origin != 0;
+        f->date = o.date;
+        f->ok = kp::WriteFabFiles( board->board, o, f->files, f->warnings );
+    }
+    catch( const std::exception& e )
+    {
+        f->ok = false;
+        f->warnings.push_back( e.what() );
+    }
+
+    return f;
+}
+
+
+extern "C" void kp_fab_free( kp_fab* fab ) { delete fab; }
+extern "C" int32_t kp_fab_ok( const kp_fab* fab ) { return fab && fab->ok ? 1 : 0; }
+extern "C" int32_t kp_fab_file_count( const kp_fab* fab ) { return fab ? (int32_t) fab->files.size() : 0; }
+
+extern "C" const char* kp_fab_file_name( const kp_fab* fab, int32_t i )
+{
+    return fab && i >= 0 && i < (int32_t) fab->files.size() ? fab->files[(size_t) i].name.c_str() : "";
+}
+
+extern "C" const char* kp_fab_file_kind( const kp_fab* fab, int32_t i )
+{
+    return fab && i >= 0 && i < (int32_t) fab->files.size() ? fab->files[(size_t) i].kind.c_str() : "";
+}
+
+extern "C" const char* kp_fab_file_data( const kp_fab* fab, int32_t i, size_t* length )
+{
+    if( !fab || i < 0 || i >= (int32_t) fab->files.size() )
+    {
+        if( length )
+            *length = 0;
+
+        return "";
+    }
+
+    if( length )
+        *length = fab->files[(size_t) i].data.size();
+
+    return fab->files[(size_t) i].data.data();
+}
+
+extern "C" const char* kp_fab_zip( kp_fab* fab, size_t* length )
+{
+    if( !fab )
+    {
+        if( length )
+            *length = 0;
+
+        return "";
+    }
+
+    if( fab->zip.empty() && !fab->files.empty() )
+        fab->zip = kp::MakeZip( fab->files, fab->date );
+
+    if( length )
+        *length = fab->zip.size();
+
+    return fab->zip.data();
+}
+
+extern "C" int32_t kp_fab_warning_count( const kp_fab* fab ) { return fab ? (int32_t) fab->warnings.size() : 0; }
+
+extern "C" const char* kp_fab_warning( const kp_fab* fab, int32_t i )
+{
+    return fab && i >= 0 && i < (int32_t) fab->warnings.size() ? fab->warnings[(size_t) i].c_str() : "";
+}
+
+
 extern "C" const char* kp_core_version( void )
 {
-    return "0.4.0";
+    return "0.5.0";
 }

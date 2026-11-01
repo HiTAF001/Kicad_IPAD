@@ -150,7 +150,19 @@ void Document::Remove( int aIndex )
 }
 
 
-int Document::Append( const std::string& aBody )
+std::string Document::LastItemWhitespace() const
+{
+    for( size_t i = m_items.size(); i-- > 0; )
+    {
+        if( !m_items[i].removed )
+            return m_items[i].ws;
+    }
+
+    return "\n\t";
+}
+
+
+int Document::Append( const std::string& aBody, const std::string& aWhitespace )
 {
     bool autoStep = !m_inStep;
 
@@ -158,7 +170,7 @@ int Document::Append( const std::string& aBody )
         Begin( Tr( "Add" ) );
 
     DocItem it;
-    it.ws = "\n\t";
+    it.ws = aWhitespace;
     it.body = std::string();
     it.removed = true; // does not exist before the step
     m_items.push_back( it );
