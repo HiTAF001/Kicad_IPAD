@@ -271,11 +271,12 @@ uint32_t SReader::parseExpr( SPool& aPool )
     {
         aPool.nodes.emplace_back();
         aPool.nodes.back().type = SNode::LIST;
+        aPool.nodes.back().begin = (uint32_t) ( m_p - m_begin );
         return (uint32_t) ( aPool.nodes.size() - 1 );
     };
 
-    ++m_p;
     uint32_t root = newList();
+    ++m_p;
     stack.push_back( { root, NIL } );
 
     auto append = [&]( uint32_t aChild )
@@ -303,12 +304,13 @@ uint32_t SReader::parseExpr( SPool& aPool )
         if( c == ')' )
         {
             ++m_p;
+            aPool.nodes[stack.back().list].end = (uint32_t) ( m_p - m_begin );
             stack.pop_back();
         }
         else if( c == '(' )
         {
-            ++m_p;
             uint32_t l = newList();
+            ++m_p;
             append( l );
             stack.push_back( { l, NIL } );
         }
@@ -326,6 +328,7 @@ uint32_t SReader::parseExpr( SPool& aPool )
 uint32_t SReader::parseAtom( SPool& aPool )
 {
     SNode n;
+    n.begin = (uint32_t) ( m_p - m_begin );
 
     if( *m_p == '"' )
     {
@@ -446,8 +449,78 @@ uint32_t SReader::parseAtom( SPool& aPool )
         n.len = (uint32_t) ( m_p - s );
     }
 
+    n.end = (uint32_t) ( m_p - m_begin );
     aPool.nodes.push_back( n );
     return (uint32_t) ( aPool.nodes.size() - 1 );
+}
+
+
+bool SReader::SkipTopLevel( size_t& aStart, size_t& aEnd )
+{
+    for( ;; )
+    {
+        skipSpace();
+
+        if( m_p >= m_end )
+            return false;
+
+        if( *m_p == ')' )
+        {
+            ++m_p;
+            return false;
+        }
+
+        if( *m_p != '(' )
+        {
+            // stray atom at top level: skip it
+            while( m_p < m_end && *m_p != ' ' && *m_p != '\t' && *m_p != '\n' && *m_p != '\r'
+                   && *m_p != '(' && *m_p != ')' )
+            {
+                ++m_p;
+            }
+
+            continue;
+        }
+
+        aStart = (size_t) ( m_p - m_begin );
+        int depth = 0;
+
+        while( m_p < m_end )
+        {
+            char c = *m_p;
+
+            if( c == '"' )
+            {
+                ++m_p;
+
+                while( m_p < m_end && *m_p != '"' )
+                    m_p += ( *m_p == '\\' && m_p + 1 < m_end ) ? 2 : 1;
+
+                if( m_p >= m_end )
+                    fail( "Kapanmamış tırnak" );
+
+                ++m_p;
+                continue;
+            }
+
+            ++m_p;
+
+            if( c == '(' )
+            {
+                ++depth;
+            }
+            else if( c == ')' )
+            {
+                if( --depth == 0 )
+                {
+                    aEnd = (size_t) ( m_p - m_begin );
+                    return true;
+                }
+            }
+        }
+
+        fail( "Kapanmamış parantez" );
+    }
 }
 
 } // namespace kp

@@ -53,6 +53,11 @@ struct PickFilter
     bool kindVisible( ItemKind k ) const { return ( hiddenKinds & ( 1u << (unsigned) k ) ) == 0; }
 };
 
+/// Geometry helpers shared with the connectivity code.
+bool   PadContains( const Pad& aPad, const Pt& aPoint, double aTolerance );
+double PointSegmentDistance( const Pt& aPoint, const Pt& aA, const Pt& aB );
+bool   PointInPolygon( const Pt& aPoint, const Path& aPolygon );
+
 /// Items under aPoint (mm), best candidate first.
 void Pick( const Board& aBoard, const Mesh& aMesh, const Pt& aPoint, double aTolerance,
            const PickFilter& aFilter, std::vector<PickHit>& aOut );

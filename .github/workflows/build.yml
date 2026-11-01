@@ -185,6 +185,8 @@ jobs:
           shoot 8-measure -KiPadOpenSample pic_programmer -KiPadDemo measure
           shoot 9-labels -KiPadOpenSample pic_programmer -KiPadDemo labels
           shoot 10-search -KiPadOpenSample pic_programmer -KiPadPanel search
+          shoot 11-edit-rotate -KiPadOpenSample pic_programmer -KiPadDemo edit
+          shoot 12-edit-fields -KiPadOpenSample pic_programmer -KiPadDemo edit -KiPadPanel fields
           xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "KiPad"' --style compact > shots/app-log.txt 2>&1 || true
           ls -la shots
 

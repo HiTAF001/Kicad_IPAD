@@ -102,6 +102,8 @@ typedef struct
     int64_t triangle_count;
     double  parse_ms;
     double  mesh_ms;
+    int32_t unconnected; /**< airwires (missing connections) */
+    double  conn_ms;
 } kp_stats;
 
 typedef struct
@@ -212,6 +214,54 @@ const char* kp_board_footprint_value( const kp_board* board, int32_t index );
 int32_t     kp_board_footprint_back( const kp_board* board, int32_t index );
 int32_t     kp_board_net_count( const kp_board* board );
 const char* kp_board_net_name( const kp_board* board, int32_t net );
+
+int32_t kp_board_footprint_pose( const kp_board* board, int32_t index, double* x, double* y, double* angle );
+
+/** Width of a track or arc item (mm), 0 for other items. */
+double  kp_board_track_width( const kp_board* board, const kp_item* item );
+/** Via diameter and drill (mm). Returns 0 for a bad index. */
+int32_t kp_board_via_geometry( const kp_board* board, int32_t index, double* size, double* drill );
+
+/** Ratsnest: airwires as x1,y1,x2,y2 floats (count receives the number of floats). */
+int32_t      kp_board_airwire_count( const kp_board* board );
+const float* kp_board_airwires( const kp_board* board, size_t* count );
+
+/* ------------------------------------------------------------------------------------------
+ * Editing. A kp_doc holds the file text (lossless: unedited items are written back byte for
+ * byte) with undo/redo. Boards are built from it with kp_board_load_doc; edits take the doc
+ * and the board built from its current state, change only the doc, and the caller then
+ * builds a fresh board. All functions return 1 on success, 0 on failure (message in error).
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_doc kp_doc;
+
+kp_doc*     kp_doc_create( const char* data, size_t length, char* error, size_t error_size );
+void        kp_doc_free( kp_doc* doc );
+kp_board*   kp_board_load_doc( kp_doc* doc, char* error, size_t error_size );
+const char* kp_doc_text( kp_doc* doc, size_t* length ); /**< valid until the next call */
+int32_t     kp_doc_modified( const kp_doc* doc );
+void        kp_doc_mark_saved( kp_doc* doc );
+int32_t     kp_doc_can_undo( const kp_doc* doc );
+int32_t     kp_doc_can_redo( const kp_doc* doc );
+const char* kp_doc_undo_label( kp_doc* doc );
+const char* kp_doc_redo_label( kp_doc* doc );
+int32_t     kp_doc_undo( kp_doc* doc );
+int32_t     kp_doc_redo( kp_doc* doc );
+int32_t     kp_doc_board_current( const kp_doc* doc, const kp_board* board );
+
+int32_t kp_edit_move_footprint( kp_doc* doc, const kp_board* board, int32_t footprint, double dx, double dy,
+                                char* error, size_t error_size );
+int32_t kp_edit_rotate_footprint( kp_doc* doc, const kp_board* board, int32_t footprint, double degrees,
+                                  char* error, size_t error_size );
+int32_t kp_edit_delete( kp_doc* doc, const kp_board* board, const kp_item* item, char* error, size_t error_size );
+int32_t kp_edit_set_field( kp_doc* doc, const kp_board* board, int32_t footprint, const char* field,
+                           const char* value, char* error, size_t error_size );
+/** Reference and/or value (NULL = leave unchanged) in one undo step. */
+int32_t kp_edit_set_ref_value( kp_doc* doc, const kp_board* board, int32_t footprint, const char* reference,
+                               const char* value, char* error, size_t error_size );
+int32_t kp_edit_set_track_width( kp_doc* doc, const kp_board* board, const kp_item* item, double width,
+                                 char* error, size_t error_size );
+int32_t kp_edit_set_via( kp_doc* doc, const kp_board* board, int32_t via, double size, double drill,
+                         char* error, size_t error_size );
 
 const char* kp_core_version( void );
 

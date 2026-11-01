@@ -53,6 +53,8 @@ struct SNode
     uint32_t    count = 0;    ///< number of children (lists only)
     const char* text = nullptr;
     uint32_t    len = 0;
+    uint32_t    begin = 0; ///< byte offset of the node in the parsed buffer ('(' for lists)
+    uint32_t    end = 0;   ///< one past the last byte (after ')' for lists)
 };
 
 class SPool
@@ -108,6 +110,10 @@ public:
     }
 
     uint32_t size() const { return isList() ? node().count : 0; }
+
+    /// Byte range of this node in the buffer it was parsed from.
+    uint32_t begin() const { return valid() ? node().begin : 0; }
+    uint32_t end() const { return valid() ? node().end : 0; }
 
     N first() const { return isList() ? N( m_pool, node().first ) : N(); }
     N next() const { return valid() ? N( m_pool, node().next ) : N(); }
@@ -242,6 +248,12 @@ public:
 
     /// Parse a complete standalone expression (whole buffer) into aPool.
     N ParseAll( SPool& aPool );
+
+    /**
+     * Find the next child of the root without building a tree. Returns false at the end.
+     * aStart/aEnd receive the byte range of the child list.
+     */
+    bool SkipTopLevel( size_t& aStart, size_t& aEnd );
 
     size_t Offset() const { return (size_t) ( m_p - m_begin ); }
     size_t Length() const { return (size_t) ( m_end - m_begin ); }

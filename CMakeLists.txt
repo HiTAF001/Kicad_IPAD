@@ -15,6 +15,9 @@ add_library( kpcore STATIC
     core/src/newstroke_font.cpp
     core/src/mesh.cpp
     core/src/pick.cpp
+    core/src/connectivity.cpp
+    core/src/document.cpp
+    core/src/edit.cpp
     core/src/kpcore.cpp
 )
 target_include_directories( kpcore PUBLIC core/include PRIVATE core/src )
@@ -37,3 +40,10 @@ target_link_libraries( kpcli PRIVATE kpcore )
 enable_testing()
 file( GLOB KIPAD_SAMPLES ${CMAKE_SOURCE_DIR}/samples/*.kicad_pcb )
 add_test( NAME load_samples COMMAND kpcli check ${KIPAD_SAMPLES} )
+
+# Edits, then undo of every edit, must give back the original file byte for byte.
+set( KIPAD_PIC ${CMAKE_SOURCE_DIR}/samples/pic_programmer.kicad_pcb )
+add_test( NAME edit_undo_roundtrip
+          COMMAND ${CMAKE_COMMAND}
+                  -DKPCLI=$<TARGET_FILE:kpcli> -DIN=${KIPAD_PIC} -DOUT=${CMAKE_BINARY_DIR}/undo_roundtrip.kicad_pcb
+                  -P ${CMAKE_SOURCE_DIR}/tools/edit_roundtrip.cmake )

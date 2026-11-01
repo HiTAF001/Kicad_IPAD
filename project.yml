@@ -16,7 +16,7 @@ settings:
     GCC_ENABLE_CPP_EXCEPTIONS: YES
     GCC_ENABLE_CPP_RTTI: YES
     ENABLE_BITCODE: NO
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.4.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -78,7 +78,7 @@ targets:
                 - kicad_pcb
         CFBundleDocumentTypes:
           - CFBundleTypeName: KiCad PCB
-            CFBundleTypeRole: Viewer
+            CFBundleTypeRole: Editor
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - org.kicad.pcb

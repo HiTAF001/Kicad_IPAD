@@ -376,6 +376,24 @@ void viaSpan( const Board& b, const Via& v, int& oa, int& ob )
 } // anonymous namespace
 
 
+bool PadContains( const Pad& aPad, const Pt& aPoint, double aTolerance )
+{
+    return padHit( aPad, aPoint, aTolerance );
+}
+
+
+double PointSegmentDistance( const Pt& aPoint, const Pt& aA, const Pt& aB )
+{
+    return distSeg( aPoint, aA, aB );
+}
+
+
+bool PointInPolygon( const Pt& aPoint, const Path& aPolygon )
+{
+    return aPolygon.size() >= 3 && inPoly( aPoint, aPolygon );
+}
+
+
 void Pick( const Board& b, const Mesh& m, const Pt& p, double tol, const PickFilter& f,
            std::vector<PickHit>& out )
 {

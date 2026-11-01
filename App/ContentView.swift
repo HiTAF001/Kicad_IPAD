@@ -25,8 +25,18 @@ struct ContentView: View {
                                 measureA: store.measureA,
                                 measureB: store.measureB,
                                 focus: store.focusRequest,
+                                dragPreview: store.dragPreview,
                                 onTap: { point, tolerance in
                                     store.handleTap(at: point, tolerance: tolerance)
+                                },
+                                onDragBegin: { point, tolerance in
+                                    store.dragCanBegin(at: point, tolerance: tolerance)
+                                },
+                                onDragSnap: { raw in
+                                    store.dragSnapped(raw)
+                                },
+                                onDragEnd: { raw in
+                                    store.dragEnded(raw)
                                 })
                         .ignoresSafeArea(edges: [.bottom, .horizontal])
 
@@ -43,6 +53,20 @@ struct ContentView: View {
                         MeasureBar()
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     }
+
+                    if store.editMode {
+                        EditBar()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
+                    if let toast = store.toast {
+                        ToastView(toast: toast)
+                            .padding(.bottom, 56)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 } else {
                     WelcomeView(openFile: { showImporter = true })
                 }
@@ -52,7 +76,9 @@ struct ContentView: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: store.selection?.item)
-            .navigationTitle(store.board?.name ?? "KiPad")
+            .animation(.easeOut(duration: 0.2), value: store.editMode)
+            .animation(.easeOut(duration: 0.2), value: store.toast)
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .fileImporter(isPresented: $showImporter,
@@ -79,6 +105,37 @@ struct ContentView: View {
                 SearchView()
                     .environmentObject(store)
             }
+            .sheet(item: $store.activeSheet) { sheet in
+                Group {
+                    switch sheet {
+                    case .fields: FieldEditSheet()
+                    case .trackWidth: TrackWidthSheet()
+                    case .via: ViaSheet()
+                    }
+                }
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+            }
+            .fileExporter(isPresented: $store.showExporter,
+                          document: store.exportFile,
+                          contentType: .kicadPCB,
+                          defaultFilename: store.documentName + ".kicad_pcb") { result in
+                store.exportFinished(result)
+            }
+            .confirmationDialog("Kaydedilmemiş değişiklikler var",
+                                isPresented: Binding(get: { store.pendingAction != nil },
+                                                     set: { if !$0 { store.pendingAction = nil } }),
+                                titleVisibility: .visible) {
+                if store.canSaveInPlace {
+                    Button("Kaydet ve devam et") { store.saveAndContinue() }
+                }
+                Button("Kaydetmeden devam et", role: .destructive) { store.discardAndContinue() }
+                Button("Vazgeç", role: .cancel) { store.pendingAction = nil }
+            } message: {
+                Text(store.canSaveInPlace
+                     ? "\(store.documentName) üzerinde kaydedilmemiş düzenlemeler var."
+                     : "\(store.documentName) bir örnek kart; değişiklikleri saklamak için önce \"Farklı kaydet\" kullan.")
+            }
             .task {
                 store.handleLaunchArguments()
             }
@@ -94,6 +151,8 @@ struct ContentView: View {
                         showLayers = true
                     } else if panel == "search" {
                         showSearch = true
+                    } else if panel == "fields" {
+                        store.activeSheet = .fields
                     }
                 }
             }
@@ -105,6 +164,11 @@ struct ContentView: View {
                 Text(store.errorMessage ?? "")
             }
         }
+    }
+
+    private var title: String {
+        guard let board = store.board else { return "KiPad" }
+        return store.docState.modified ? "\(board.name) •" : board.name
     }
 
     // MARK: - Toolbar
@@ -129,6 +193,13 @@ struct ContentView: View {
 
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if store.board != nil {
+                Button {
+                    store.editMode.toggle()
+                } label: {
+                    Label(store.editMode ? "Düzenlemeyi bitir" : "Düzenle",
+                          systemImage: store.editMode ? "pencil.circle.fill" : "pencil.circle")
+                }
+
                 Button {
                     showSearch = true
                 } label: {
@@ -184,7 +255,13 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            if let text = store.cursorText {
+            if store.editMode && store.editFootprint != nil {
+                Image(systemName: "hand.draw")
+                Text("Footprint'i parmakla sürükle: taşı · \(gridTitle(store.gridStep))")
+            } else if store.editMode {
+                Image(systemName: "pencil")
+                Text("Düzenleme: footprint, pist, via, bölge ya da yazı seç")
+            } else if let text = store.cursorText {
                 Image(systemName: "scope")
                 Text(text)
                     .monospacedDigit()
@@ -236,7 +313,7 @@ struct WelcomeView: View {
                 VStack(spacing: 6) {
                     Text("KiPad")
                         .font(.largeTitle.bold())
-                    Text("KiCad kart görüntüleyici")
+                    Text("KiCad kart görüntüleyici ve düzenleyici")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -303,6 +380,20 @@ struct HelpView: View {
                     helpRow("number.square", "Pad ve net adları", "Yakınlaştıkça pad numaraları ve net adları görünür")
                 }
 
+                Section("Düzenleme") {
+                    helpRow("pencil.circle", "Düzenle", "Düzenleme çubuğunu açar. Pad'e dokunmak footprint'i seçer")
+                    helpRow("hand.draw", "Seçili footprint'i sürükle", "Taşır ve ızgaraya oturtur; boş yerde sürüklemek kartı kaydırır")
+                    helpRow("rotate.left", "Döndür", "Footprint'i 90° döndürür")
+                    helpRow("trash", "Sil", "Footprint, pist, via, bölge, çizim ya da yazıyı siler")
+                    helpRow("character.cursor.ibeam", "Referans / değer, pist genişliği, via", "Seçime göre çubukta çıkar")
+                    helpRow("arrow.uturn.left", "Geri al / Yinele", "Her düzenleme geri alınabilir")
+                    helpRow("square.and.arrow.down", "Kaydet", "Dosyanın üzerine yazar; yalnız değişen öğeler yeniden yazılır, gerisi bayt bayt aynı kalır")
+                    helpRow("line.diagonal", "Ratsnest", "Bağlanmamış pad'ler arasındaki ince çizgiler; Katmanlar panelinden kapatılabilir")
+                    Text("Bakır bölge dolguları yeniden hesaplanmaz. Taşıdıktan sonra KiCad'de dolguyu yenile (B).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Klavye / trackpad") {
                     helpRow("rectangle.and.hand.point.up.left", "Trackpad ile kaydır", "Kartı kaydırır")
                     helpRow("plus.magnifyingglass", "Trackpad ile sıkıştır", "Yakınlaştırır")
@@ -314,7 +405,7 @@ struct HelpView: View {
                 }
 
                 Section("Hakkında") {
-                    Text("KiPad, KiCad'in .kicad_pcb dosyalarını okuyan bağımsız bir görüntüleyicidir. "
+                    Text("KiPad, KiCad'in .kicad_pcb dosyalarını okuyan ve düzenleyen bağımsız bir uygulamadır. "
                          + "KiCad'in stroke yazı tipini ve renk temasını kullanır. GPL-3.0 lisanslıdır.")
                     Text("Çekirdek sürümü \(String(cString: kp_core_version()))")
                         .foregroundStyle(.secondary)

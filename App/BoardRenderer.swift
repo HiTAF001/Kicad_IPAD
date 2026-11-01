@@ -10,6 +10,10 @@
 //
 // Highlighting: a full-screen quad dims the board (and resets the stencil), then the selected
 // item's triangles - gathered from the main index buffer - are drawn again in a brighter colour.
+// While a footprint is dragged in edit mode the same highlight is drawn shifted by the drag
+// offset, so it follows the finger until the edited board has been rebuilt.
+//
+// Ratsnest: airwires are drawn as thin lines of constant on-screen width on top of the board.
 
 import MetalKit
 import UIKit
@@ -55,6 +59,8 @@ private struct DrawItem {
 }
 
 private let backgroundColor = SIMD4<Float>(0, 16.0 / 255.0, 35.0 / 255.0, 1)
+/// KiCad's default ratsnest colour.
+private let ratsnestColor = SIMD4<Float>(245.0 / 255.0, 1.0, 213.0 / 255.0, 0.75)
 
 @MainActor
 final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegate {
@@ -82,6 +88,18 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     private var measureB: SIMD2<Double>?
     private var lastFocusID = 0
 
+    // footprint dragging (edit mode)
+    private var dragging = false
+    private var dragStartScreen = CGPoint.zero
+    private var dragOffset: SIMD2<Double>?      // snapped, while the finger is down
+    private var committedOffset: SIMD2<Double>? // after release, until the new board arrives
+
+    // ratsnest geometry, rebuilt when the board or the zoom changes noticeably
+    private var ratsnestBuffer: MTLBuffer?
+    private var ratsnestVertexCount = 0
+    private var ratsnestZoom = 0.0
+    private var ratsnestBoard: ObjectIdentifier?
+
     // Camera: world point at the view centre and drawable pixels per millimetre.
     private var center = SIMD2<Double>(0, 0)
     private var zoom: Double = 1
@@ -90,6 +108,12 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     private var pendingFocus: FocusRequest?
 
     var onTap: (@MainActor (SIMD2<Double>, Double) -> Void)?
+    /// A one-finger drag starts at this world point: return true to move the selected footprint.
+    var onDragBegin: (@MainActor (SIMD2<Double>, Double) -> Bool)?
+    /// Raw world offset -> grid-snapped offset.
+    var onDragSnap: (@MainActor (SIMD2<Double>) -> SIMD2<Double>)?
+    /// Finger lifted: raw world offset.
+    var onDragEnd: (@MainActor (SIMD2<Double>) -> Void)?
 
     override init() {
         device = MetalContext.shared.device
@@ -205,15 +229,25 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
     func update(board: LoadedBoard?, visibleSlots: Set<Int>, hiddenKinds: Set<Int>, flipped: Bool,
                 fitToken: Int, highlight: HighlightSpec?, measureA: SIMD2<Double>?,
-                measureB: SIMD2<Double>?, focus: FocusRequest?) {
+                measureB: SIMD2<Double>?, focus: FocusRequest?, dragPreview: SIMD2<Double>?) {
         var dirty = false
         var highlightDirty = false
 
         if board !== self.board {
+            // a board rebuilt after an edit keeps the camera
+            let sameDocument = board != nil && self.board != nil && board!.lineage != 0
+                && board!.lineage == self.board!.lineage
+
             self.board = board
-            needsFit = true
+            needsFit = needsFit || !sameDocument
             dirty = true
             highlightDirty = true
+            ratsnestBuffer = nil
+        }
+
+        if dragPreview != committedOffset {
+            committedOffset = dragPreview
+            requestDraw()
         }
 
         if visibleSlots != self.visibleSlots || hiddenKinds != self.hiddenKinds {
@@ -454,9 +488,46 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
         guard let view = g.view else { return }
 
+        let s = Double(view.contentScaleFactor)
+
+        if g.state == .began && g.numberOfTouches == 1, let onDragBegin {
+            // where the finger first touched: the recogniser fires after some movement
+            let loc = g.location(in: view)
+            let t = g.translation(in: view)
+            let start = CGPoint(x: loc.x - t.x, y: loc.y - t.y)
+            let tolerance = 12.0 * s / zoom
+
+            if onDragBegin(screenToWorld(start, in: view), tolerance) {
+                dragging = true
+                dragStartScreen = start
+            }
+        }
+
+        if dragging {
+            let loc = g.location(in: view)
+            let raw = SIMD2(Double(loc.x - dragStartScreen.x) * s / zoom * flipSign,
+                            Double(loc.y - dragStartScreen.y) * s / zoom)
+
+            switch g.state {
+            case .began, .changed:
+                dragOffset = onDragSnap?(raw) ?? raw
+            case .ended:
+                dragging = false
+                // keep showing the drop position; the store confirms or clears it
+                committedOffset = onDragSnap?(raw) ?? raw
+                dragOffset = nil
+                onDragEnd?(raw)
+            default: // cancelled / failed
+                dragging = false
+                dragOffset = nil
+            }
+
+            requestDraw()
+            return
+        }
+
         let t = g.translation(in: view)
         g.setTranslation(.zero, in: view)
-        let s = Double(view.contentScaleFactor)
         center.x -= Double(t.x) * s / zoom * flipSign
         center.y -= Double(t.y) * s / zoom
         requestDraw()
@@ -568,7 +639,15 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
                 encoder.setDepthStencilState(stencilState)
                 encoder.setVertexBuffer(vb, offset: 0, index: 0)
 
+                // a dragged footprint is drawn where it will land
+                var hu = u
+
+                if let d = dragOffset ?? committedOffset {
+                    hu.offset += SIMD2(Float(d.x * sx), Float(d.y * sy))
+                }
+
                 for item in highlightList {
+                    var u = hu
                     u.color = item.color
                     encoder.setStencilReferenceValue(item.stencilRef)
                     encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -578,6 +657,21 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
                                                   indexType: .uint32,
                                                   indexBuffer: hb,
                                                   indexBufferOffset: item.indexOffset)
+                }
+            }
+
+            // ---- ratsnest
+            if !hiddenKinds.contains(ObjectCategory.ratsnestKind), !board.airwires.isEmpty,
+               let overlayState {
+                updateRatsnest(board: board)
+
+                if let rb = ratsnestBuffer, ratsnestVertexCount > 0 {
+                    u.color = ratsnestColor
+                    encoder.setDepthStencilState(overlayState)
+                    encoder.setVertexBuffer(rb, offset: 0, index: 0)
+                    encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+                    encoder.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: ratsnestVertexCount)
                 }
             }
 
@@ -621,6 +715,36 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     }
 
     // MARK: - Overlay geometry (world coordinates)
+
+    /// Airwire quads about 1.3 points wide; rebuilt when the zoom changed by more than ~15 %.
+    private func updateRatsnest(board: LoadedBoard) {
+        let id = ObjectIdentifier(board)
+
+        if ratsnestBuffer != nil, ratsnestBoard == id, ratsnestZoom > 0, abs(log(zoom / ratsnestZoom)) < 0.15 {
+            return
+        }
+
+        ratsnestBoard = id
+        ratsnestZoom = zoom
+        ratsnestBuffer = nil
+        ratsnestVertexCount = 0
+
+        guard let device else { return }
+
+        let width = 1.3 * Double(view?.contentScaleFactor ?? 2) / zoom
+        var verts: [SIMD2<Float>] = []
+        verts.reserveCapacity(board.airwires.count * 6)
+
+        for w in board.airwires {
+            appendSegment(&verts, SIMD2(Double(w.x), Double(w.y)), SIMD2(Double(w.z), Double(w.w)), width: width)
+        }
+
+        guard !verts.isEmpty else { return }
+
+        ratsnestBuffer = device.makeBuffer(bytes: verts, length: verts.count * MemoryLayout<SIMD2<Float>>.stride,
+                                           options: .storageModeShared)
+        ratsnestVertexCount = ratsnestBuffer != nil ? verts.count : 0
+    }
 
     private func appendSegment(_ out: inout [SIMD2<Float>], _ a: SIMD2<Double>, _ b: SIMD2<Double>,
                                width: Double) {

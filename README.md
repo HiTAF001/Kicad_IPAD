@@ -1,17 +1,20 @@
-# KiPad: iPad için KiCad kart görüntüleyici
+# KiPad: iPad için KiCad kart görüntüleyici ve düzenleyici
 
 KiPad, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan, yerel (native) bir uygulamadır.
 Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşınabilir C++17 ile yazıldı.
 
-> Durum: **Faz 1–3: görüntüleyici + inceleme araçları.** Kartı açar, KiCad renkleri ve yazı
-> tipiyle çizer; öğe seçme ve bilgi kartı, net vurgulama, arama, ölçüm ve pad/net etiketleri var.
-> Düzenleme (taşıma, pist çizme, DRC) henüz yok.
+> Durum: **Faz 1–4: görüntüleyici, inceleme araçları ve temel düzenleme.** Kartı açar, KiCad
+> renkleri ve yazı tipiyle çizer; seçim, net vurgulama, arama, ölçüm, pad/net etiketleri var.
+> Faz 4 ile footprint taşıma/döndürme, silme, referans/değer, pist genişliği, via boyutu,
+> geri al/yinele, kaydetme ve ratsnest geldi. Pist çizme, DRC ve şematik sonraki fazlarda.
 
 | Üstten | Alttan görünüm | Katman paneli |
 |---|---|---|
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/2-pic-front.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/3-pic-back.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/4-ecc83-layers.png) |
 | **Footprint seçimi** | **Net vurgulama** | **Pad / net etiketleri** |
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/6-select-footprint.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/7-net-highlight.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/9-labels.png) |
+| **Düzenleme (döndürülmüş footprint + ratsnest)** | **Referans / değer** | **Ölçüm** |
+| ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/11-edit-rotate.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/12-edit-fields.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/8-measure.png) |
 
 *Ekran görüntüleri her derlemede CI tarafından iPad simülatöründe çekilir (`ci-screenshots` dalı).*
 
@@ -35,6 +38,17 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 - **Ölçüm:** iki noktaya dokun → mesafe, ΔX, ΔY, açı; pad ve via merkezlerine tutunur.
 - **Pad numarası ve net adları:** yakınlaştıkça pad'lerin üzerinde numara ve net adı, pistlerin
   üzerinde net adı belirir (KiCad'deki gibi); alttan görünümde de okunur.
+- **Düzenleme (Faz 4):**
+  - footprint'i parmakla sürükleyip ızgaraya oturtma (0,1 – 2,54 mm), 90° döndürme
+  - silme: footprint, pist, via, bakır bölge, çizim, yazı
+  - referans ve değer değiştirme, pist genişliği, via çapı ve deliği
+  - sınırsız geri al / yinele
+  - **Kaydet** (dosyanın üzerine) ve **Farklı kaydet**; kaydedilmemiş değişiklik uyarısı
+  - kayıpsız kaydetme: yalnız değiştirilen öğeler yeniden yazılır, dosyanın geri kalanı bayt bayt
+    aynı kalır (KiCad'in kendi biçimlendirmesi, yorumlar, sıralama korunur)
+  - kilitli öğeler düzenlenmez (KiCad'deki gibi)
+- **Ratsnest:** bağlanmamış pad'ler arasında ince çizgiler; her düzenlemeden sonra yeniden
+  hesaplanır. Kart bilgisinde eksik bağlantı sayısı görünür.
 - Kart bilgisi ekranı (ölçüler, eleman sayıları, KiCad sürümü).
 - Uygulamanın içinde iki örnek kart (KiCad demolarından).
 
@@ -74,6 +88,15 @@ AltStore → My Apps → **+** ile seç.
 | Tek dokun | Öğeyi seç ve bilgisini göster (ölçüm modunda: ölçüm noktası) |
 | Aynı yere tekrar dokun | Alttaki öğeye geç |
 | Trackpad / Magic Keyboard | Kaydırma ve sıkıştırma çalışır |
+| **Düzenleme modunda:** seçili footprint'i sürükle | Taşı (ızgaraya oturur); boş yerde sürüklemek kartı kaydırır |
+
+Düzenleme için sağ üstteki kalem simgesine dokun. Düzenleme modunda bir pad'e dokunmak o pad'in
+footprint'ini seçer. Üstteki çubukta geri al / yinele, döndür, sil, seçime göre referans/değer,
+pist genişliği veya via, ızgara ve kaydet düğmeleri var.
+
+> Bakır bölge dolguları yeniden hesaplanmaz (KiCad'de de dolgu elle yenilenir). Taşıdığın
+> footprint bir bölgenin içindeyse dosyayı KiCad'de açıp dolguyu yenile (**B**). Örnek kartlar
+> uygulama paketinin içinde olduğu için yalnız "Farklı kaydet" ile saklanabilir.
 
 Dosyayı **Aç** düğmesiyle (Dosyalar, iCloud Drive, OneDrive, AirDrop ile gelenler) seçebilir ya da
 Dosyalar uygulamasında bir `.kicad_pcb` dosyasını paylaş menüsünden KiPad'e gönderebilirsin.
@@ -88,6 +111,11 @@ core/            Taşınabilir C++17 çekirdek (iOS, Linux, Windows, macOS'ta de
   src/mesh.*         Kart → katman/nesne gruplarına ayrılmış üçgen ağları (earcut, paralel),
                      öğe başına üçgen aralıkları (vurgulama), pad/net etiketleri
   src/pick.*         Seçim (hit-test), öğe/net açıklamaları, ölçüm için tutunma
+  src/document.*     Kayıpsız düzenlenebilir belge: üst düzey öğeler bayt aralıklarıyla,
+                     geri al / yinele
+  src/edit.*         Düzenlemeler (taşı, döndür, sil, alan, pist genişliği, via) — yalnız ilgili
+                     düğümlerin baytlarını değiştirir
+  src/connectivity.* Bakır bağlantı analizi (pad/via/pist/bölge) ve ratsnest (MST)
   include/kpcore.h   Swift'in kullandığı düz C arayüzü
 App/             SwiftUI arayüz + Metal çizici
 tools/kpcli.cpp  Masaüstü test aracı: istatistik, PNG çıktı (Metal çiziciyi taklit eder)
@@ -109,12 +137,23 @@ cmake --build build
 ./build/kpcli render samples/pic_programmer.kicad_pcb out-back.png 1600 --back
 ./build/kpcli pick samples/pic_programmer.kicad_pcb 110.49 78.867            # o noktada ne var
 ./build/kpcli render samples/pic_programmer.kicad_pcb net.png 1600 --pick 110.49 78.867 --net
+./build/kpcli edit samples/pic_programmer.kicad_pcb out.kicad_pcb move C1 2.54 0 rotate C2 90 \
+      field C1 Value 470uF delete P101 undo                                  # düzenle, kaydet, yeniden aç
 ctest --test-dir build
 ```
 
 Çekirdek, KiCad deposundaki 446 test/demo kartının tamamını (KiCad 4'ten 11 geliştirme sürümüne)
 AddressSanitizer/UBSan altında hatasız açıyor. Bozuk dosyalar çökme yerine satır numaralı hata
 mesajı veriyor.
+
+Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
+
+- **Ratsnest:** KiCad 7'nin okuyabildiği 71 kartta eksik bağlantı sayısı KiCad'in
+  `GetUnconnectedCount()` sonucuyla birebir aynı.
+- **Düzenleme:** 40 kartta rastgele taşıma/döndürme/alan değişikliği yapıldı; KiPad'in kaydettiği
+  dosya, aynı işlemlerin KiCad API'siyle yapılmış haliyle karşılaştırıldı (footprint konumu ve açısı,
+  her pad'in konumu ve açısı, referans/değer yazılarının konumu ve açısı): 0 fark.
+- Tüm düzenlemeler geri alınınca dosya orijinaliyle bayt bayt aynı (ctest).
 
 ### Mac'te derlemek (isteğe bağlı)
 
@@ -127,8 +166,11 @@ open KiPad.xcodeproj
 ## Yol haritası
 
 - ~~Faz 3: eleman seçme ve bilgi, net vurgulama, arama, ölçüm aracı, pad/net adları~~ ✓
-- Faz 4: düzenleme ve kaydetme (taşıma, döndürme, özellik değiştirme)
-- Faz 5: pist çizme ve DRC, dokunmatik için yeniden tasarlanmış
+- ~~Faz 4: düzenleme ve kaydetme (taşıma, döndürme, silme, alanlar, ratsnest)~~ ✓
+- Faz 5: pist ve via çizme (dokunmatik için), temel DRC (açıklık, kısa devre)
+- Faz 6: şematik görüntüleyici (`.kicad_sch`)
+- Faz 7: şematik düzenleme ve PCB'ye aktarma (netlist güncelleme)
+- Faz 8: sıfırdan proje: kart kenarı, footprint kütüphanesi, yerleştirme
 
 ## Lisans
 

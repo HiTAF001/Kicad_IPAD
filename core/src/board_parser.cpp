@@ -428,6 +428,7 @@ private:
 
     Board& m_board;
     int    m_version = 0;
+    int    m_curItem = -1; ///< index of the top-level item being parsed
     double m_defaultViaDrill = 0.0;
     int    m_warnCount = 0;
 };
@@ -621,6 +622,7 @@ void BoardParser::Parse( const char* aData, size_t aLen )
 
     while( N item = reader.NextTopLevel( pool ) )
     {
+        ++m_curItem;
         std::string_view h = item.head();
 
         try
@@ -1066,11 +1068,13 @@ void BoardParser::parseShape( N aNode, int aFootprint, const FpXform& aXf,
                 seg.end = s.poly[i + 1];
                 seg.poly.clear();
                 aOut.push_back( seg );
+                aOut.back().docItem = m_curItem;
             }
         }
         else
         {
             aOut.push_back( s );
+            aOut.back().docItem = m_curItem;
         }
 
         return;
@@ -1097,6 +1101,7 @@ void BoardParser::parseShape( N aNode, int aFootprint, const FpXform& aXf,
                 seg.poly.clear();
                 seg.layer = l;
                 aOut.push_back( seg );
+                aOut.back().docItem = m_curItem;
             }
         }
         else
@@ -1104,6 +1109,7 @@ void BoardParser::parseShape( N aNode, int aFootprint, const FpXform& aXf,
             Shape copy = s;
             copy.layer = l;
             aOut.push_back( std::move( copy ) );
+            aOut.back().docItem = m_curItem;
         }
     }
 }
@@ -1384,6 +1390,7 @@ void BoardParser::parseText( N aNode, int aFootprint, const FpXform& aXf, bool a
 
     finishTextGeometry( t, m_version );
     m_board.texts.push_back( std::move( t ) );
+    m_board.texts.back().docItem = m_curItem;
 }
 
 
@@ -1469,6 +1476,7 @@ void BoardParser::parseTextBox( N aNode, int aFootprint, const FpXform& aXf )
         s.layer = t.layer;
         s.footprint = aFootprint;
         m_board.shapes.push_back( s );
+        m_board.shapes.back().docItem = m_curItem;
     }
 
     double margin = t.sizeY * 0.75 + t.thickness; // KiCad default margin approximation
@@ -1491,6 +1499,7 @@ void BoardParser::parseTextBox( N aNode, int aFootprint, const FpXform& aXf )
     t.keepUpright = false;
     finishTextGeometry( t, m_version );
     m_board.texts.push_back( std::move( t ) );
+    m_board.texts.back().docItem = m_curItem;
 }
 
 
@@ -1554,6 +1563,8 @@ void BoardParser::parseFootprint( N aNode )
     xf.angle = fp.angle;
 
     m_board.footprints.push_back( fp );
+
+    m_board.footprints.back().docItem = m_curItem;
     int idx = (int) m_board.footprints.size() - 1;
 
     // pass 2: children
@@ -1832,6 +1843,8 @@ void BoardParser::parsePad( N aNode, int aFootprint, const FpXform& aXf )
         m_board.footprints[aFootprint].padCount++;
 
     m_board.pads.push_back( std::move( p ) );
+
+    m_board.pads.back().docItem = m_curItem;
 }
 
 
@@ -1851,6 +1864,8 @@ void BoardParser::parseTrack( N aNode )
 
     if( N n = aNode.find( "net" ) )
         t.net = netRef( n );
+
+    t.docItem = m_curItem;
 
     if( t.layer >= 0 )
         m_board.tracks.push_back( t );
@@ -1872,6 +1887,8 @@ void BoardParser::parseArc( N aNode )
 
     if( N n = aNode.find( "net" ) )
         a.net = netRef( n );
+
+    a.docItem = m_curItem;
 
     if( a.layer >= 0 )
         m_board.arcs.push_back( a );
@@ -1952,6 +1969,8 @@ void BoardParser::parseVia( N aNode )
         v.drill = m_defaultViaDrill;
 
     m_board.vias.push_back( v );
+
+    m_board.vias.back().docItem = m_curItem;
 }
 
 
@@ -2063,6 +2082,7 @@ void BoardParser::parseZone( N aNode, int aFootprint, const FpXform& aXf )
 
     z.layers.erase( std::remove( z.layers.begin(), z.layers.end(), -1 ), z.layers.end() );
     m_board.zones.push_back( std::move( z ) );
+    m_board.zones.back().docItem = m_curItem;
 }
 
 
@@ -2127,6 +2147,7 @@ void BoardParser::parseDimension( N aNode, int aFootprint, const FpXform& aXf )
         s.layer = layer;
         s.footprint = aFootprint;
         m_board.shapes.push_back( s );
+        m_board.shapes.back().docItem = m_curItem;
     };
 
     auto arrow = [&]( Pt tip, Pt dir )
@@ -2251,6 +2272,7 @@ void BoardParser::parseTarget( N aNode )
     c.width = width;
     c.layer = layer;
     m_board.shapes.push_back( c );
+    m_board.shapes.back().docItem = m_curItem;
 
     double h = size / 2.0;
 
@@ -2268,6 +2290,7 @@ void BoardParser::parseTarget( N aNode )
         s.width = width;
         s.layer = layer;
         m_board.shapes.push_back( s );
+        m_board.shapes.back().docItem = m_curItem;
     }
 }
 

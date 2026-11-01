@@ -57,6 +57,9 @@ struct BoardInfoView: View {
                         ? "\(board.stats.zones) (+\(board.stats.keepouts) yasak bölge)"
                         : "\(board.stats.zones)")
                     row("Net", "\(board.stats.nets)")
+                    row("Bağlanmamış", board.stats.unconnected == 0
+                        ? "Yok — tüm bağlantılar tamam"
+                        : "\(board.stats.unconnected) bağlantı eksik (ratsnest)")
                     row("Kart çizimi", "\(board.stats.graphics)")
                     row("Kart yazısı", "\(board.stats.texts)")
                 }
@@ -64,6 +67,7 @@ struct BoardInfoView: View {
                 Section("Performans") {
                     row("Okuma", String(format: "%.0f ms", board.stats.parse_ms))
                     row("Geometri", String(format: "%.0f ms", board.stats.mesh_ms))
+                    row("Bağlantı analizi", String(format: "%.0f ms", board.stats.conn_ms))
                     row("Üçgen", NumberFormatter.localizedString(from: NSNumber(value: board.stats.triangle_count),
                                                                  number: .decimal))
                 }

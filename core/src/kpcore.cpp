@@ -11,6 +11,9 @@
 #include "board.h"
 #include "mesh.h"
 #include "pick.h"
+#include "connectivity.h"
+#include "document.h"
+#include "edit.h"
 #include "sexpr.h"
 
 #include <algorithm>
@@ -29,6 +32,17 @@ struct kp_board
     std::vector<kp::ItemRange> rangeScratch;
     kp_item     rangeKey { -1, -1, -1, -1, -1 };
     int32_t     rangeWholeNet = -1;
+    std::vector<float> airwires;   // x1,y1,x2,y2 per airwire
+    std::vector<int>   docMap;     // parse index -> document item (boards built from a kp_doc)
+    const void*        docOwner = nullptr;
+    uint64_t           docState = 0;
+};
+
+struct kp_doc
+{
+    kp::Document doc;
+    std::string  textScratch;
+    std::string  labelScratch;
 };
 
 static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
@@ -42,7 +56,15 @@ static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
 }
 
 
+static kp_board* buildBoard( const char* data, size_t length, char* error, size_t error_size );
+
 extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error, size_t error_size )
+{
+    return buildBoard( data, length, error, error_size );
+}
+
+
+static kp_board* buildBoard( const char* data, size_t length, char* error, size_t error_size )
 {
     if( !data || length == 0 )
     {
@@ -70,6 +92,22 @@ extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error
         kp::BuildMesh( b->board, b->mesh );
 
         auto t2 = clock::now();
+
+        kp::Connectivity conn;
+        kp::ComputeConnectivity( b->board, conn );
+        b->airwires.reserve( conn.airwires.size() * 4 );
+
+        for( const kp::Airwire& a : conn.airwires )
+        {
+            b->airwires.push_back( (float) a.a.x );
+            b->airwires.push_back( (float) a.a.y );
+            b->airwires.push_back( (float) a.b.x );
+            b->airwires.push_back( (float) a.b.y );
+        }
+
+        auto t3 = clock::now();
+        b->stats.unconnected = (int32_t) conn.airwires.size();
+        b->stats.conn_ms = std::chrono::duration<double, std::milli>( t3 - t2 ).count();
 
         kp::BoardStats s = b->board.Stats();
         kp_stats&      o = b->stats;
@@ -469,7 +507,302 @@ extern "C" const char* kp_board_net_name( const kp_board* board, int32_t net )
 }
 
 
+extern "C" int32_t kp_board_footprint_pose( const kp_board* board, int32_t index, double* x, double* y,
+                                            double* angle )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
+        return 0;
+
+    const kp::Footprint& f = board->board.footprints[(size_t) index];
+
+    if( x )
+        *x = f.pos.x;
+    if( y )
+        *y = f.pos.y;
+    if( angle )
+        *angle = f.angle;
+
+    return 1;
+}
+
+
+extern "C" double kp_board_track_width( const kp_board* board, const kp_item* item )
+{
+    if( !board || !item )
+        return 0.0;
+
+    if( item->type == KP_ITEM_TRACK && item->index >= 0 && item->index < (int32_t) board->board.tracks.size() )
+        return board->board.tracks[(size_t) item->index].width;
+
+    if( item->type == KP_ITEM_ARC && item->index >= 0 && item->index < (int32_t) board->board.arcs.size() )
+        return board->board.arcs[(size_t) item->index].width;
+
+    return 0.0;
+}
+
+
+extern "C" int32_t kp_board_via_geometry( const kp_board* board, int32_t index, double* size, double* drill )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.vias.size() )
+        return 0;
+
+    const kp::Via& v = board->board.vias[(size_t) index];
+
+    if( size )
+        *size = v.size;
+    if( drill )
+        *drill = v.drill;
+
+    return 1;
+}
+
+
+extern "C" int32_t kp_board_airwire_count( const kp_board* board )
+{
+    return board ? (int32_t) ( board->airwires.size() / 4 ) : 0;
+}
+
+
+extern "C" const float* kp_board_airwires( const kp_board* board, size_t* count )
+{
+    if( count )
+        *count = board ? board->airwires.size() : 0;
+
+    return board && !board->airwires.empty() ? board->airwires.data() : nullptr;
+}
+
+
+// ------------------------------------------------------------------------------------------
+// Editable document
+// ------------------------------------------------------------------------------------------
+
+extern "C" kp_doc* kp_doc_create( const char* data, size_t length, char* error, size_t error_size )
+{
+    if( !data || length == 0 )
+    {
+        copyError( error, error_size, "Dosya boş" );
+        return nullptr;
+    }
+
+    kp_doc* d = new( std::nothrow ) kp_doc();
+
+    if( !d )
+    {
+        copyError( error, error_size, "Bellek yetersiz" );
+        return nullptr;
+    }
+
+    try
+    {
+        d->doc.Load( data, length );
+    }
+    catch( const std::exception& e )
+    {
+        copyError( error, error_size, std::string( "Dosya okunamadı: " ) + e.what() );
+        delete d;
+        return nullptr;
+    }
+
+    return d;
+}
+
+
+extern "C" void kp_doc_free( kp_doc* doc )
+{
+    delete doc;
+}
+
+
+extern "C" kp_board* kp_board_load_doc( kp_doc* doc, char* error, size_t error_size )
+{
+    if( !doc )
+    {
+        copyError( error, error_size, "Belge yok" );
+        return nullptr;
+    }
+
+    std::string text = doc->doc.Text();
+    kp_board*   b = buildBoard( text.data(), text.size(), error, error_size );
+
+    if( b )
+    {
+        b->docMap = doc->doc.LiveItems();
+        b->docOwner = doc;
+        b->docState = doc->doc.StateId();
+    }
+
+    return b;
+}
+
+
+extern "C" const char* kp_doc_text( kp_doc* doc, size_t* length )
+{
+    if( !doc )
+    {
+        if( length )
+            *length = 0;
+
+        return "";
+    }
+
+    doc->textScratch = doc->doc.Text();
+
+    if( length )
+        *length = doc->textScratch.size();
+
+    return doc->textScratch.c_str();
+}
+
+
+extern "C" int32_t kp_doc_modified( const kp_doc* doc ) { return doc && doc->doc.Modified() ? 1 : 0; }
+extern "C" void    kp_doc_mark_saved( kp_doc* doc ) { if( doc ) doc->doc.MarkSaved(); }
+extern "C" int32_t kp_doc_can_undo( const kp_doc* doc ) { return doc && doc->doc.CanUndo() ? 1 : 0; }
+extern "C" int32_t kp_doc_can_redo( const kp_doc* doc ) { return doc && doc->doc.CanRedo() ? 1 : 0; }
+extern "C" int32_t kp_doc_undo( kp_doc* doc ) { return doc && doc->doc.Undo() ? 1 : 0; }
+extern "C" int32_t kp_doc_redo( kp_doc* doc ) { return doc && doc->doc.Redo() ? 1 : 0; }
+
+
+extern "C" const char* kp_doc_undo_label( kp_doc* doc )
+{
+    if( !doc )
+        return "";
+
+    doc->labelScratch = doc->doc.UndoLabel();
+    return doc->labelScratch.c_str();
+}
+
+
+extern "C" const char* kp_doc_redo_label( kp_doc* doc )
+{
+    if( !doc )
+        return "";
+
+    doc->labelScratch = doc->doc.RedoLabel();
+    return doc->labelScratch.c_str();
+}
+
+
+extern "C" int32_t kp_doc_board_current( const kp_doc* doc, const kp_board* board )
+{
+    return doc && board && board->docOwner == doc && board->docState == doc->doc.StateId() ? 1 : 0;
+}
+
+
+template <typename F>
+static int32_t runEdit( kp_doc* doc, const kp_board* board, char* error, size_t error_size, F&& op )
+{
+    if( !doc || !board )
+    {
+        copyError( error, error_size, "Belge yok" );
+        return 0;
+    }
+
+    if( !kp_doc_board_current( doc, board ) )
+    {
+        copyError( error, error_size, "Kart görünümü güncel değil, biraz bekleyip tekrar dene" );
+        return 0;
+    }
+
+    try
+    {
+        kp::EditTarget t { doc->doc, board->board, board->docMap };
+        std::string    err;
+
+        if( !op( t, err ) )
+        {
+            copyError( error, error_size, err );
+            return 0;
+        }
+    }
+    catch( const std::exception& e )
+    {
+        doc->doc.Cancel();
+        copyError( error, error_size, std::string( "Düzenleme hatası: " ) + e.what() );
+        return 0;
+    }
+
+    return 1;
+}
+
+
+extern "C" int32_t kp_edit_move_footprint( kp_doc* doc, const kp_board* board, int32_t footprint, double dx,
+                                           double dy, char* error, size_t error_size )
+{
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err ) { return kp::MoveFootprint( t, footprint, dx, dy, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_rotate_footprint( kp_doc* doc, const kp_board* board, int32_t footprint,
+                                             double degrees, char* error, size_t error_size )
+{
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err ) { return kp::RotateFootprint( t, footprint, degrees, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_delete( kp_doc* doc, const kp_board* board, const kp_item* item, char* error,
+                                   size_t error_size )
+{
+    if( !item )
+        return 0;
+
+    kp_item it = *item;
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    { return kp::DeleteItem( t, (kp::ItemType) it.type, it.index, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_set_field( kp_doc* doc, const kp_board* board, int32_t footprint, const char* field,
+                                      const char* value, char* error, size_t error_size )
+{
+    std::string f = field ? field : "";
+    std::string v = value ? value : "";
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err ) { return kp::SetFootprintField( t, footprint, f, v, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_set_ref_value( kp_doc* doc, const kp_board* board, int32_t footprint,
+                                          const char* reference, const char* value, char* error,
+                                          size_t error_size )
+{
+    std::vector<std::pair<std::string, std::string>> fields;
+
+    if( reference )
+        fields.emplace_back( "Reference", reference );
+
+    if( value )
+        fields.emplace_back( "Value", value );
+
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err ) { return kp::SetFootprintFields( t, footprint, fields, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_set_track_width( kp_doc* doc, const kp_board* board, const kp_item* item, double width,
+                                            char* error, size_t error_size )
+{
+    if( !item )
+        return 0;
+
+    kp_item it = *item;
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    { return kp::SetTrackWidth( t, (kp::ItemType) it.type, it.index, width, err ); } );
+}
+
+
+extern "C" int32_t kp_edit_set_via( kp_doc* doc, const kp_board* board, int32_t via, double size, double drill,
+                                    char* error, size_t error_size )
+{
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err ) { return kp::SetViaSize( t, via, size, drill, err ); } );
+}
+
+
 extern "C" const char* kp_core_version( void )
 {
-    return "0.2.0";
+    return "0.4.0";
 }

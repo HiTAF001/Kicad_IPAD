@@ -123,6 +123,7 @@ struct Shape
     bool      filled = false;
     int       layer = -1;
     int       footprint = -1;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 enum class HAlign : int8_t { LEFT = -1, CENTER = 0, RIGHT = 1 };
@@ -151,6 +152,7 @@ struct Text
     /// Outline-font glyph polygons cached by KiCad (absolute coords); each entry:
     /// [0] = outline, [1..] = holes.
     std::vector<std::vector<Path>> renderCache;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 enum class PadAttr : uint8_t { PTH, SMD, CONN, NPTH };
@@ -193,6 +195,7 @@ struct Pad
     int         footprint = -1;
     std::string pinFunction;
     std::string pinType;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 struct Track
@@ -201,6 +204,7 @@ struct Track
     double width = 0.2;
     int    layer = -1;
     int    net = 0;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 struct ArcTrack
@@ -209,6 +213,7 @@ struct ArcTrack
     double width = 0.2;
     int    layer = -1;
     int    net = 0;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 enum class ViaType : uint8_t { THROUGH, BLIND, BURIED, MICRO };
@@ -224,6 +229,7 @@ struct Via
     std::vector<std::pair<int, double>> sizeOverride; ///< per-layer size (padstack)
     double  innerSize = 0.0;
     int     net = 0;
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 struct ZoneFill
@@ -244,6 +250,7 @@ struct Zone
     int                   footprint = -1;
     double                minThickness = 0.0;
     bool                  strokeFill = false; ///< legacy zones: fill outlines drawn with min width
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 struct Footprint
@@ -259,6 +266,7 @@ struct Footprint
     std::unordered_map<std::string, std::string> fields;
     std::vector<std::string> attrs;
     BBox        localBox; ///< outline in the footprint frame (rotate by -angle around pos)
+    int         docItem = -1; ///< index of the top-level file item this came from
 };
 
 struct BoardStats

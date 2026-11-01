@@ -20,6 +20,12 @@
  *        --pick x y             select the item at (x, y) and highlight it
  *        --net                  with --pick: highlight the item's whole net
  *        --no-labels            hide pad/net labels
+ *        --no-ratsnest          hide airwires
+ *   kpcli edit <in> <out> <op>...           apply edits, save, reload and verify
+ *       ops: move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |
+ *            width TRACK W | via VIA SIZE DRILL | del KIND INDEX | undo | redo
+ *        ops: move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |
+ *             width TRACK_INDEX W | undo | redo
  */
 #include "kpcore.h"
 
@@ -88,7 +94,16 @@ static int cmdStats( const char* aPath )
     printf( "size: %.2f x %.2f mm, thickness %.2f mm\n", s.width_mm, s.height_mm, s.thickness_mm );
     printf( "mesh: %lld vertices, %lld triangles, %d groups\n", (long long) s.vertex_count,
             (long long) s.triangle_count, kp_board_group_count( b ) );
-    printf( "time: parse %.1f ms, mesh %.1f ms\n", s.parse_ms, s.mesh_ms );
+    printf( "time: parse %.1f ms, mesh %.1f ms, connectivity %.1f ms\n", s.parse_ms, s.mesh_ms, s.conn_ms );
+    printf( "unconnected (airwires): %d\n", s.unconnected );
+
+    {
+        size_t       nf = 0;
+        const float* aw = kp_board_airwires( b, &nf );
+
+        for( size_t k = 0; k + 3 < nf && k < 40; k += 4 )
+            printf( "  airwire (%.3f, %.3f) -> (%.3f, %.3f)\n", aw[k], aw[k + 1], aw[k + 2], aw[k + 3] );
+    }
 
     for( int i = 0; i < s.warning_count; ++i )
         printf( "warning: %s\n", kp_board_warning( b, i ) );
@@ -222,6 +237,7 @@ static int cmdRender( int argc, char** argv )
     const char* outPath = argv[1];
     int         width = 1600;
     bool        back = false, haveView = false, havePick = false, wholeNet = false, labels = true;
+    bool        ratsnest = true;
     double      vx0 = 0, vy0 = 0, vx1 = 0, vy1 = 0, pickX = 0, pickY = 0;
 
     for( int i = 2; i < argc; ++i )
@@ -234,6 +250,8 @@ static int cmdRender( int argc, char** argv )
             wholeNet = true;
         else if( a == "--no-labels" )
             labels = false;
+        else if( a == "--no-ratsnest" )
+            ratsnest = false;
         else if( a == "--view" && i + 4 < argc )
         {
             haveView = true;
@@ -344,6 +362,28 @@ static int cmdRender( int argc, char** argv )
 
         R.fill( V, I, g.index_start, g.index_count, (uint8_t) ( g.slot % 255 + 1 ), g.r, g.g, g.b, g.a );
         ++drawnGroups;
+    }
+
+    if( ratsnest )
+    {
+        size_t       nf = 0;
+        const float* aw = kp_board_airwires( b, &nf );
+        double       hw = 1.0 * SS / R.scale; // ~1 output pixel wide, in mm
+
+        for( size_t k = 0; k + 3 < nf; k += 4 )
+        {
+            double ax = aw[k], ay = aw[k + 1], bx = aw[k + 2], by = aw[k + 3];
+            double dx = bx - ax, dy = by - ay, len = std::hypot( dx, dy );
+
+            if( len <= 0 )
+                continue;
+
+            double nx = -dy / len * hw, ny = dx / len * hw;
+            float  quad[8] = { (float) ( ax + nx ), (float) ( ay + ny ), (float) ( ax - nx ), (float) ( ay - ny ),
+                               (float) ( bx - nx ), (float) ( by - ny ), (float) ( bx + nx ), (float) ( by + ny ) };
+            uint32_t idx[6] = { 0, 1, 2, 0, 2, 3 };
+            R.fill( quad, idx, 0, 6, 254, 0.0f, 248 / 255.0f, 1.0f, 0.75f );
+        }
     }
 
     if( havePick )
@@ -459,9 +499,10 @@ static int cmdCheck( int argc, char** argv )
             }
         }
 
-        printf( "OK  v%-8d fp=%-5d pads=%-6d trk=%-6d via=%-5d zone=%-3d tri=%-8lld picks=%-3d warn=%d  %.0f+%.0f ms  %s\n",
+        printf( "OK  v%-8d fp=%-5d pads=%-6d trk=%-6d via=%-5d zone=%-3d tri=%-8lld picks=%-3d unc=%-4d warn=%d  %.0f+%.0f+%.0f ms  %s\n",
                 s.file_version, s.footprints, s.pads, s.tracks + s.arcs, s.vias, s.zones,
-                (long long) s.triangle_count, picks, s.warning_count, s.parse_ms, s.mesh_ms, argv[i] );
+                (long long) s.triangle_count, picks, s.unconnected, s.warning_count, s.parse_ms, s.mesh_ms,
+                s.conn_ms, argv[i] );
         (void) ranges;
         kp_board_free( b );
     }
@@ -471,8 +512,181 @@ static int cmdCheck( int argc, char** argv )
 }
 
 
+static int findFootprint( const kp_board* b, const char* ref )
+{
+    for( int i = 0; i < kp_board_footprint_count( b ); ++i )
+    {
+        if( !strcmp( kp_board_footprint_ref( b, i ), ref ) )
+            return i;
+    }
+
+    return -1;
+}
+
+
+static int cmdEdit( int argc, char** argv )
+{
+    const char* inPath = argv[0];
+    const char* outPath = argv[1];
+    std::string data;
+
+    if( !readFile( inPath, data ) )
+    {
+        fprintf( stderr, "cannot read %s\n", inPath );
+        return 1;
+    }
+
+    char    err[512] = { 0 };
+    kp_doc* doc = kp_doc_create( data.data(), data.size(), err, sizeof( err ) );
+
+    if( !doc )
+    {
+        fprintf( stderr, "%s\n", err );
+        return 1;
+    }
+
+    kp_board* b = kp_board_load_doc( doc, err, sizeof( err ) );
+
+    if( !b )
+    {
+        fprintf( stderr, "%s\n", err );
+        return 1;
+    }
+
+    kp_stats s0;
+    kp_board_stats( b, &s0 );
+    int failures = 0;
+
+    for( int i = 2; i < argc; )
+    {
+        std::string op = argv[i++];
+        int         ok = 0;
+        err[0] = 0;
+
+        if( op == "move" && i + 2 < argc + 0 )
+        {
+            int fp = findFootprint( b, argv[i] );
+            ok = kp_edit_move_footprint( doc, b, fp, atof( argv[i + 1] ), atof( argv[i + 2] ), err, sizeof( err ) );
+            printf( "move %s %s %s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "rotate" && i + 1 < argc + 0 )
+        {
+            int fp = findFootprint( b, argv[i] );
+            ok = kp_edit_rotate_footprint( doc, b, fp, atof( argv[i + 1] ), err, sizeof( err ) );
+            printf( "rotate %s %s: %s %s\n", argv[i], argv[i + 1], ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "delete" && i < argc )
+        {
+            kp_item it { 5, findFootprint( b, argv[i] ), -1, 0, -1 };
+            it.footprint = it.index;
+            ok = kp_edit_delete( doc, b, &it, err, sizeof( err ) );
+            printf( "delete %s: %s %s\n", argv[i], ok ? "ok" : "FAILED", err );
+            i += 1;
+        }
+        else if( op == "field" && i + 2 < argc + 0 )
+        {
+            int fp = findFootprint( b, argv[i] );
+            ok = kp_edit_set_field( doc, b, fp, argv[i + 1], argv[i + 2], err, sizeof( err ) );
+            printf( "field %s %s=%s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "width" && i + 1 < argc + 0 )
+        {
+            kp_item it { 3, atoi( argv[i] ), -1, 0, -1 };
+            ok = kp_edit_set_track_width( doc, b, &it, atof( argv[i + 1] ), err, sizeof( err ) );
+            printf( "width #%s %s: %s %s\n", argv[i], argv[i + 1], ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "del" && i + 1 < argc + 0 )
+        {
+            // del <track|arc|via|zone|shape|text|pad> <index>
+            static const std::pair<const char*, int> kinds[] = {
+                { "pad", KP_ITEM_PAD },     { "via", KP_ITEM_VIA },     { "track", KP_ITEM_TRACK },
+                { "arc", KP_ITEM_ARC },     { "zone", KP_ITEM_ZONE },   { "shape", KP_ITEM_SHAPE },
+                { "text", KP_ITEM_TEXT }
+            };
+            int type = 0;
+
+            for( const auto& k : kinds )
+            {
+                if( !strcmp( argv[i], k.first ) )
+                    type = k.second;
+            }
+
+            kp_item it { type, atoi( argv[i + 1] ), -1, 0, -1 };
+            ok = type && kp_edit_delete( doc, b, &it, err, sizeof( err ) );
+            printf( "del %s #%s: %s %s\n", argv[i], argv[i + 1], ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "via" && i + 2 < argc + 0 )
+        {
+            ok = kp_edit_set_via( doc, b, atoi( argv[i] ), atof( argv[i + 1] ), atof( argv[i + 2] ), err, sizeof( err ) );
+            printf( "via #%s %s/%s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "undo" )
+        {
+            ok = kp_doc_undo( doc );
+            printf( "undo: %s\n", ok ? "ok" : "nothing to undo" );
+        }
+        else if( op == "redo" )
+        {
+            ok = kp_doc_redo( doc );
+            printf( "redo: %s\n", ok ? "ok" : "nothing to redo" );
+        }
+        else
+        {
+            fprintf( stderr, "bad op %s\n", op.c_str() );
+            return 2;
+        }
+
+        failures += !ok;
+
+        // rebuild the board from the edited document, as the app does
+        kp_board* nb = kp_board_load_doc( doc, err, sizeof( err ) );
+
+        if( !nb )
+        {
+            fprintf( stderr, "rebuild failed: %s\n", err );
+            return 1;
+        }
+
+        kp_board_free( b );
+        b = nb;
+    }
+
+    size_t      len = 0;
+    const char* text = kp_doc_text( doc, &len );
+    std::ofstream out( outPath, std::ios::binary );
+    out.write( text, (std::streamsize) len );
+    out.close();
+
+    kp_stats s1;
+    kp_board_stats( b, &s1 );
+    printf( "saved %s (%zu bytes, modified=%d). footprints %d -> %d, pads %d -> %d, unconnected %d -> %d\n",
+            outPath, len, kp_doc_modified( doc ), s0.footprints, s1.footprints, s0.pads, s1.pads, s0.unconnected,
+            s1.unconnected );
+
+    // the saved file must load again
+    kp_board* check = load( outPath );
+
+    if( !check )
+        return 1;
+
+    kp_board_free( check );
+    kp_board_free( b );
+    kp_doc_free( doc );
+    return failures ? 3 : 0;
+}
+
+
 int main( int argc, char** argv )
 {
+    if( argc >= 4 && !strcmp( argv[1], "edit" ) )
+        return cmdEdit( argc - 2, argv + 2 );
+
     if( argc >= 3 && !strcmp( argv[1], "stats" ) )
         return cmdStats( argv[2] );
 
@@ -486,6 +700,8 @@ int main( int argc, char** argv )
         return cmdCheck( argc - 2, argv + 2 );
 
     fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli check <files...>\n  kpcli pick <file> <x> <y> [tol]\n"
-                     "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n" );
+                     "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n"
+                     "  kpcli edit <in> <out> ops... (move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |\n"
+                     "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | undo | redo)\n" );
     return 2;
 }

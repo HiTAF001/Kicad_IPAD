@@ -32,9 +32,12 @@ enum ItemType: Int32 {
 
 /// Object categories the user can toggle.
 enum ObjectCategory: String, CaseIterable, Identifiable {
-    case tracks, vias, pads, zones, graphics, texts, holes, labels
+    case tracks, vias, pads, zones, graphics, texts, holes, labels, ratsnest
 
     var id: String { rawValue }
+
+    /// Pseudo item kind for the airwires (not a mesh kind, ignored by picking).
+    static let ratsnestKind = 100
 
     var title: String {
         switch self {
@@ -46,6 +49,7 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
         case .texts: return "Yazılar"
         case .holes: return "Delikler"
         case .labels: return "Pad numarası ve net adları"
+        case .ratsnest: return "Bağlanmamış bağlantılar (ratsnest)"
         }
     }
 
@@ -59,6 +63,7 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
         case .texts: return "textformat"
         case .holes: return "smallcircle.filled.circle"
         case .labels: return "number.square"
+        case .ratsnest: return "line.diagonal"
         }
     }
 
@@ -74,6 +79,7 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
                              ItemKind.wallVia.rawValue, ItemKind.hole.rawValue]
         case .labels: return [ItemKind.label0.rawValue, ItemKind.label1.rawValue, ItemKind.label2.rawValue,
                               ItemKind.label3.rawValue, ItemKind.label4.rawValue]
+        case .ratsnest: return [ObjectCategory.ratsnestKind]
         }
     }
 }
@@ -237,13 +243,18 @@ final class LoadedBoard: @unchecked Sendable {
     let nets: [NetEntry]
     let vertexBuffer: MTLBuffer?
     let indexBuffer: MTLBuffer?
+    /// Airwires (ratsnest) as start/end points in millimetres.
+    let airwires: [SIMD4<Float>]
+    /// Boards rebuilt from the same document share this (0 = not editable).
+    let lineage: Int
 
     private let handle: OpaquePointer
 
-    private init(name: String, fileSize: Int, handle: OpaquePointer, device: MTLDevice) throws {
+    private init(name: String, fileSize: Int, handle: OpaquePointer, device: MTLDevice, lineage: Int) throws {
         self.name = name
         self.fileSize = fileSize
         self.handle = handle
+        self.lineage = lineage
 
         var s = kp_stats()
         kp_board_stats(handle, &s)
@@ -342,6 +353,19 @@ final class LoadedBoard: @unchecked Sendable {
 
         nets = netList
 
+        var wireFloats = 0
+        var wires: [SIMD4<Float>] = []
+
+        if let wp = kp_board_airwires(handle, &wireFloats), wireFloats >= 4 {
+            wires.reserveCapacity(wireFloats / 4)
+
+            for i in stride(from: 0, to: wireFloats - 3, by: 4) {
+                wires.append(SIMD4(wp[i], wp[i + 1], wp[i + 2], wp[i + 3]))
+            }
+        }
+
+        airwires = wires
+
         // Upload the mesh to the GPU, then free the CPU copy. All throwing happens before the
         // last stored properties are set, so deinit (which frees the handle) never runs for a
         // half-built object; the caller frees the handle in that case.
@@ -403,9 +427,38 @@ final class LoadedBoard: @unchecked Sendable {
         }
 
         do {
-            return try LoadedBoard(name: name, fileSize: data.count, handle: handle, device: device)
+            return try LoadedBoard(name: name, fileSize: data.count, handle: handle, device: device, lineage: 0)
         } catch {
             // init threw before taking ownership through deinit
+            kp_board_free(handle)
+            throw error
+        }
+    }
+
+    /// Builds a board from the current state of an editable document (background task).
+    static func load(document: BoardDocument, name: String, fileSize: Int) throws -> LoadedBoard {
+        guard let device = MetalContext.shared.device else {
+            throw KiPadError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
+        }
+
+        let errorSize = 1024
+        var errorBuffer = [CChar](repeating: 0, count: errorSize)
+        let handle = errorBuffer.withUnsafeMutableBufferPointer { errPtr -> OpaquePointer? in
+            kp_board_load_doc(document.handle, errPtr.baseAddress, errorSize)
+        }
+
+        guard let handle else {
+            let message = errorBuffer.withUnsafeBufferPointer { ptr -> String in
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
+            }
+            throw KiPadError.message(message.isEmpty ? "Kart oluşturulamadı." : message)
+        }
+
+        do {
+            return try LoadedBoard(name: name, fileSize: fileSize, handle: handle, device: device,
+                                   lineage: document.lineage)
+        } catch {
             kp_board_free(handle)
             throw error
         }
@@ -476,5 +529,100 @@ final class LoadedBoard: @unchecked Sendable {
             _ = kp_board_item_ranges(handle, &c, wholeNet ? 1 : 0, o.baseAddress, Int32(total))
         }
         return out
+    }
+
+    /// Anchor position (mm) and orientation (degrees) of a footprint.
+    func footprintPose(_ index: Int) -> (position: SIMD2<Double>, angle: Double)? {
+        var x = 0.0, y = 0.0, a = 0.0
+
+        guard kp_board_footprint_pose(handle, Int32(index), &x, &y, &a) != 0 else { return nil }
+
+        return (SIMD2(x, y), a)
+    }
+
+    func trackWidth(_ item: PickedItem) -> Double {
+        var c = item.cItem
+        return kp_board_track_width(handle, &c)
+    }
+
+    func viaGeometry(_ index: Int) -> (size: Double, drill: Double)? {
+        var size = 0.0, drill = 0.0
+
+        guard kp_board_via_geometry(handle, Int32(index), &size, &drill) != 0 else { return nil }
+
+        return (size, drill)
+    }
+
+    // MARK: - Edits (main thread; the document must not be in use elsewhere)
+
+    func isCurrent(for document: BoardDocument) -> Bool {
+        kp_doc_board_current(document.handle, handle) != 0
+    }
+
+    /// Runs one core edit; throws its message on failure.
+    private func edit(_ document: BoardDocument,
+                      _ body: (OpaquePointer, OpaquePointer, UnsafeMutablePointer<CChar>?, Int) -> Int32) throws {
+        let errorSize = 512
+        var errorBuffer = [CChar](repeating: 0, count: errorSize)
+        let ok = errorBuffer.withUnsafeMutableBufferPointer { errPtr -> Int32 in
+            body(document.handle, handle, errPtr.baseAddress, errorSize)
+        }
+
+        if ok == 0 {
+            let message = errorBuffer.withUnsafeBufferPointer { ptr -> String in
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
+            }
+            throw KiPadError.message(message.isEmpty ? "Düzenleme yapılamadı." : message)
+        }
+    }
+
+    func moveFootprint(_ index: Int, by delta: SIMD2<Double>, in document: BoardDocument) throws {
+        try edit(document) { doc, board, err, size in
+            kp_edit_move_footprint(doc, board, Int32(index), delta.x, delta.y, err, size)
+        }
+    }
+
+    func rotateFootprint(_ index: Int, degrees: Double, in document: BoardDocument) throws {
+        try edit(document) { doc, board, err, size in
+            kp_edit_rotate_footprint(doc, board, Int32(index), degrees, err, size)
+        }
+    }
+
+    func delete(_ item: PickedItem, in document: BoardDocument) throws {
+        var c = item.cItem
+        try edit(document) { doc, board, err, size in
+            kp_edit_delete(doc, board, &c, err, size)
+        }
+    }
+
+    func setReferenceAndValue(_ index: Int, reference: String?, value: String?, in document: BoardDocument) throws {
+        try edit(document) { doc, board, err, size in
+            switch (reference, value) {
+            case let (r?, v?):
+                return r.withCString { rp in v.withCString { vp in
+                    kp_edit_set_ref_value(doc, board, Int32(index), rp, vp, err, size)
+                } }
+            case let (r?, nil):
+                return r.withCString { rp in kp_edit_set_ref_value(doc, board, Int32(index), rp, nil, err, size) }
+            case let (nil, v?):
+                return v.withCString { vp in kp_edit_set_ref_value(doc, board, Int32(index), nil, vp, err, size) }
+            case (nil, nil):
+                return 0
+            }
+        }
+    }
+
+    func setTrackWidth(_ item: PickedItem, width: Double, in document: BoardDocument) throws {
+        var c = item.cItem
+        try edit(document) { doc, board, err, size in
+            kp_edit_set_track_width(doc, board, &c, width, err, size)
+        }
+    }
+
+    func setVia(_ index: Int, size viaSize: Double, drill: Double, in document: BoardDocument) throws {
+        try edit(document) { doc, board, err, size in
+            kp_edit_set_via(doc, board, Int32(index), viaSize, drill, err, size)
+        }
     }
 }
