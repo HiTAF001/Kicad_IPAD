@@ -10,70 +10,70 @@ struct BoardInfoView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Dosya") {
-                    row("Ad", board.name)
+                Section("File") {
+                    row("Name", board.name)
 
                     if !board.title.isEmpty {
-                        row("Başlık", board.title)
+                        row("Title", board.title)
                     }
 
                     if !board.revision.isEmpty {
-                        row("Revizyon", board.revision)
+                        row("Revision", board.revision)
                     }
 
                     if !board.company.isEmpty {
-                        row("Şirket", board.company)
+                        row("Company", board.company)
                     }
 
                     if !board.date.isEmpty {
-                        row("Tarih", board.date)
+                        row("Date", board.date)
                     }
 
                     row("KiCad", kicadVersionText)
-                    row("Dosya biçimi", "\(board.stats.file_version)")
-                    row("Boyut", ByteCountFormatter.string(fromByteCount: Int64(board.fileSize), countStyle: .file))
+                    row("File format", "\(board.stats.file_version)")
+                    row("Size", ByteCountFormatter.string(fromByteCount: Int64(board.fileSize), countStyle: .file))
                 }
 
-                Section("Kart") {
+                Section("Board") {
                     if board.stats.width_mm > 0 {
-                        row("Ölçüler", String(format: "%.2f × %.2f mm", board.stats.width_mm, board.stats.height_mm))
+                        row("Dimensions", String(format: "%.2f × %.2f mm", board.stats.width_mm, board.stats.height_mm))
                     } else {
-                        row("Ölçüler", "Kart kenarı (Edge.Cuts) yok")
+                        row("Dimensions", String(localized: "No board outline (Edge.Cuts)"))
                     }
 
-                    row("Kalınlık", String(format: "%.2f mm", board.stats.thickness_mm))
-                    row("Bakır katman", "\(board.stats.copper_layers)")
+                    row("Thickness", String(format: "%.2f mm", board.stats.thickness_mm))
+                    row("Copper layers", "\(board.stats.copper_layers)")
                 }
 
-                Section("İçerik") {
-                    row("Footprint", "\(board.stats.footprints)")
-                    row("Pad", "\(board.stats.pads)")
-                    row("Pist", board.stats.arcs > 0
-                        ? "\(board.stats.tracks) düz + \(board.stats.arcs) yay"
+                Section("Contents") {
+                    row("Footprints", "\(board.stats.footprints)")
+                    row("Pads", "\(board.stats.pads)")
+                    row("Tracks", board.stats.arcs > 0
+                        ? String(localized: "\(Int(board.stats.tracks)) straight + \(Int(board.stats.arcs)) arc")
                         : "\(board.stats.tracks)")
-                    row("Via", "\(board.stats.vias)")
-                    row("Delik (toplam)", "\(board.stats.holes)")
-                    row("Bakır bölge", board.stats.keepouts > 0
-                        ? "\(board.stats.zones) (+\(board.stats.keepouts) yasak bölge)"
+                    row("Vias", "\(board.stats.vias)")
+                    row("Holes (total)", "\(board.stats.holes)")
+                    row("Copper zones", board.stats.keepouts > 0
+                        ? String(localized: "\(Int(board.stats.zones)) (+\(Int(board.stats.keepouts)) keepout)")
                         : "\(board.stats.zones)")
-                    row("Net", "\(board.stats.nets)")
-                    row("Bağlanmamış", board.stats.unconnected == 0
-                        ? "Yok — tüm bağlantılar tamam"
-                        : "\(board.stats.unconnected) bağlantı eksik (ratsnest)")
-                    row("Kart çizimi", "\(board.stats.graphics)")
-                    row("Kart yazısı", "\(board.stats.texts)")
+                    row("Nets", "\(board.stats.nets)")
+                    row("Unconnected", board.stats.unconnected == 0
+                        ? String(localized: "None — all connections complete")
+                        : String(localized: "\(Int(board.stats.unconnected)) connections missing (ratsnest)"))
+                    row("Board graphics", "\(board.stats.graphics)")
+                    row("Board texts", "\(board.stats.texts)")
                 }
 
-                Section("Performans") {
-                    row("Okuma", String(format: "%.0f ms", board.stats.parse_ms))
-                    row("Geometri", String(format: "%.0f ms", board.stats.mesh_ms))
-                    row("Bağlantı analizi", String(format: "%.0f ms", board.stats.conn_ms))
-                    row("Üçgen", NumberFormatter.localizedString(from: NSNumber(value: board.stats.triangle_count),
+                Section("Performance") {
+                    row("Parsing", String(format: "%.0f ms", board.stats.parse_ms))
+                    row("Geometry", String(format: "%.0f ms", board.stats.mesh_ms))
+                    row("Connectivity", String(format: "%.0f ms", board.stats.conn_ms))
+                    row("Triangles", NumberFormatter.localizedString(from: NSNumber(value: board.stats.triangle_count),
                                                                  number: .decimal))
                 }
 
                 if !board.warnings.isEmpty {
-                    Section("Uyarılar") {
+                    Section("Warnings") {
                         ForEach(Array(board.warnings.enumerated()), id: \.offset) { item in
                             Text(item.element)
                                 .font(.footnote)
@@ -81,11 +81,11 @@ struct BoardInfoView: View {
                     }
                 }
             }
-            .navigationTitle("Kart bilgisi")
+            .navigationTitle("Board info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Kapat") { dismiss() }
+                    Button("Close") { dismiss() }
                 }
             }
         }
@@ -93,13 +93,13 @@ struct BoardInfoView: View {
 
     private var kicadVersionText: String {
         if board.generatorVersion.isEmpty {
-            return board.generator.isEmpty ? "Bilinmiyor" : board.generator
+            return board.generator.isEmpty ? String(localized: "Unknown") : board.generator
         }
 
         return "\(board.generatorVersion) (\(board.generator))"
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
+    private func row(_ title: LocalizedStringKey, _ value: String) -> some View {
         HStack {
             Text(title)
             Spacer()

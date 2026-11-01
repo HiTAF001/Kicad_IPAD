@@ -682,8 +682,79 @@ static int cmdEdit( int argc, char** argv )
 }
 
 
+/// KPCLI_STRINGS=path/to/Core.strings: use that translation table (like the app does).
+static void loadTranslations()
+{
+    const char* path = getenv( "KPCLI_STRINGS" );
+    std::string data;
+
+    if( !path || !readFile( path, data ) )
+        return;
+
+    std::vector<std::string> keys, values;
+    size_t                   i = 0;
+
+    auto readQuoted = [&]( std::string& out ) -> bool
+    {
+        i = data.find( '"', i );
+
+        if( i == std::string::npos )
+            return false;
+
+        for( ++i; i < data.size() && data[i] != '"'; ++i )
+        {
+            if( data[i] == '\\' && i + 1 < data.size() )
+            {
+                ++i;
+                out += data[i] == 'n' ? '\n' : data[i];
+            }
+            else
+            {
+                out += data[i];
+            }
+        }
+
+        ++i;
+        return true;
+    };
+
+    while( true )
+    {
+        size_t comment = data.find( "/*", i );
+        size_t quote = data.find( '"', i );
+
+        if( comment != std::string::npos && comment < quote )
+        {
+            i = data.find( "*/", comment );
+            i = i == std::string::npos ? data.size() : i + 2;
+            continue;
+        }
+
+        std::string k, v;
+
+        if( !readQuoted( k ) || !readQuoted( v ) )
+            break;
+
+        keys.push_back( k );
+        values.push_back( v );
+    }
+
+    std::vector<const char*> kp, vp;
+
+    for( size_t n = 0; n < keys.size(); ++n )
+    {
+        kp.push_back( keys[n].c_str() );
+        vp.push_back( values[n].c_str() );
+    }
+
+    kp_set_translations( kp.data(), vp.data(), (int32_t) kp.size() );
+}
+
+
 int main( int argc, char** argv )
 {
+    loadTranslations();
+
     if( argc >= 4 && !strcmp( argv[1], "edit" ) )
         return cmdEdit( argc - 2, argv + 2 );
 

@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "mesh.h"
+#include "i18n.h"
 #include "stroke_font.h"
 
 #include "../third_party/earcut.hpp"
@@ -986,7 +987,7 @@ void Builder::Build()
     {
         Slot w;
         w.name = "HoleWalls";
-        w.display = "Delik duvarları";
+        w.display = Tr( "Hole walls" );
         w.kind = 10;
         w.sortFront = w.sortBack = 950;
         w.color = { 194 / 255.0f, 194 / 255.0f, 0.0f, 1.0f };
@@ -995,7 +996,7 @@ void Builder::Build()
 
         Slot h;
         h.name = "Holes";
-        h.display = "Delikler";
+        h.display = Tr( "Holes" );
         h.kind = 10;
         h.sortFront = h.sortBack = 960;
         h.color = BACKGROUND_COLOR;
@@ -1011,7 +1012,7 @@ void Builder::Build()
         const Layer& L = layers[(size_t) l];
         Slot         s;
         s.name = "Labels:" + L.canonical;
-        s.display = "Etiketler (" + L.display + ")";
+        s.display = TrF( "Labels ({0})", { L.display } );
         s.kind = 10;
         s.parentSlot = l;
         s.viewSide = ( L.canonical == "B.Cu" ) ? -1 : 1;

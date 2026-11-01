@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "sexpr.h"
+#include "i18n.h"
 
 #include <cmath>
 
@@ -141,7 +142,7 @@ void SReader::fail( const char* aMsg ) const
             ++line;
     }
 
-    throw ParseError( std::string( aMsg ) + " (satır " + std::to_string( line ) + ")",
+    throw ParseError( TrF( "{0} (line {1})", { Tr( aMsg ), std::to_string( line ) } ),
                       (size_t) ( m_p - m_begin ) );
 }
 
@@ -182,15 +183,13 @@ std::string_view SReader::OpenRoot()
     skipSpace();
 
     if( m_p < m_end && *m_p == '{' )
-        throw ParseError( "Bu bir proje dosyası (.kicad_pro). Lütfen aynı klasördeki .kicad_pcb "
-                          "dosyasını seç.", 0 );
+        throw ParseError( Tr( "This is a project file (.kicad_pro). Please choose the .kicad_pcb file in the same folder." ), 0 );
 
     if( m_end - m_p >= 4 && std::string_view( m_p, 4 ) == "PK\x03\x04" )
-        throw ParseError( "Bu bir ZIP arşivi. Önce Dosyalar uygulamasında açıp içindeki .kicad_pcb "
-                          "dosyasını seç.", 0 );
+        throw ParseError( Tr( "This is a ZIP archive. Open it in the Files app first, then choose the .kicad_pcb file inside." ), 0 );
 
     if( m_p >= m_end || *m_p != '(' )
-        fail( "Dosya bir KiCad S-ifadesiyle başlamıyor" );
+        fail( "The file does not start with a KiCad S-expression" );
 
     ++m_p;
     skipSpace();
@@ -259,7 +258,7 @@ uint32_t SReader::parseExpr( SPool& aPool )
     skipSpace();
 
     if( m_p >= m_end )
-        fail( "Beklenmeyen dosya sonu" );
+        fail( "Unexpected end of file" );
 
     if( *m_p != '(' )
         return parseAtom( aPool );
@@ -297,7 +296,7 @@ uint32_t SReader::parseExpr( SPool& aPool )
         skipSpace();
 
         if( m_p >= m_end )
-            fail( "Kapanmamış parantez" );
+            fail( "Unclosed parenthesis" );
 
         char c = *m_p;
 
@@ -350,7 +349,7 @@ uint32_t SReader::parseAtom( SPool& aPool )
         }
 
         if( m_p >= m_end )
-            fail( "Kapanmamış tırnak" );
+            fail( "Unclosed quote" );
 
         const char* e = m_p;
         ++m_p; // closing quote
@@ -497,7 +496,7 @@ bool SReader::SkipTopLevel( size_t& aStart, size_t& aEnd )
                     m_p += ( *m_p == '\\' && m_p + 1 < m_end ) ? 2 : 1;
 
                 if( m_p >= m_end )
-                    fail( "Kapanmamış tırnak" );
+                    fail( "Unclosed quote" );
 
                 ++m_p;
                 continue;
@@ -519,7 +518,7 @@ bool SReader::SkipTopLevel( size_t& aStart, size_t& aEnd )
             }
         }
 
-        fail( "Kapanmamış parantez" );
+        fail( "Unclosed parenthesis" );
     }
 }
 

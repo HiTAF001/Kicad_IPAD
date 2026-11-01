@@ -217,6 +217,15 @@ const char* kp_board_net_name( const kp_board* board, int32_t net );
 
 int32_t kp_board_footprint_pose( const kp_board* board, int32_t index, double* x, double* y, double* angle );
 
+/**
+ * Translations for the core's messages and descriptions: pairs English -> current language.
+ * Call once before loading boards (not concurrently with loading).
+ */
+void kp_set_translations( const char* const* keys, const char* const* values, int32_t count );
+
+int32_t kp_board_footprint_pad_count( const kp_board* board, int32_t index );
+int32_t kp_board_net_pad_count( const kp_board* board, int32_t net );
+
 /** Width of a track or arc item (mm), 0 for other items. */
 double  kp_board_track_width( const kp_board* board, const kp_item* item );
 /** Via diameter and drill (mm). Returns 0 for a bad index. */

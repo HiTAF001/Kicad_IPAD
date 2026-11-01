@@ -13,37 +13,39 @@ struct EditBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            barButton("Geri al" + (store.docState.undoLabel.isEmpty ? "" : ": \(store.docState.undoLabel)"),
+            barButton(store.docState.undoLabel.isEmpty ? String(localized: "Undo")
+                                                       : String(localized: "Undo: \(store.docState.undoLabel)"),
                       "arrow.uturn.left", enabled: store.docState.canUndo) { store.undo() }
 
-            barButton("Yinele" + (store.docState.redoLabel.isEmpty ? "" : ": \(store.docState.redoLabel)"),
+            barButton(store.docState.redoLabel.isEmpty ? String(localized: "Redo")
+                                                       : String(localized: "Redo: \(store.docState.redoLabel)"),
                       "arrow.uturn.right", enabled: store.docState.canRedo) { store.redo() }
 
             separator
 
-            barButton("90° sola döndür", "rotate.left", enabled: store.editFootprint != nil) {
+            barButton(String(localized: "Rotate 90° left"), "rotate.left", enabled: store.editFootprint != nil) {
                 store.rotateSelection(by: 90)
             }
 
-            barButton("90° sağa döndür", "rotate.right", enabled: store.editFootprint != nil) {
+            barButton(String(localized: "Rotate 90° right"), "rotate.right", enabled: store.editFootprint != nil) {
                 store.rotateSelection(by: -90)
             }
 
-            barButton(store.deleteTarget.map { "Sil: \($0.title)" } ?? "Sil", "trash",
+            barButton(store.deleteTarget.map { String(localized: "Delete: \($0.title)") } ?? String(localized: "Delete"), "trash",
                       enabled: store.deleteTarget != nil, role: .destructive) {
                 store.deleteSelection()
             }
 
             if store.editFootprint != nil {
-                barButton("Referans ve değer", "character.cursor.ibeam", enabled: true) {
+                barButton(String(localized: "Reference and value"), "character.cursor.ibeam", enabled: true) {
                     store.activeSheet = .fields
                 }
             } else if selectedType == .track || selectedType == .arc {
-                barButton("Pist genişliği", "line.horizontal.3.decrease", enabled: true) {
+                barButton(String(localized: "Track width"), "line.horizontal.3.decrease", enabled: true) {
                     store.activeSheet = .trackWidth
                 }
             } else if selectedType == .via {
-                barButton("Via çapı ve deliği", "circle.circle", enabled: true) {
+                barButton(String(localized: "Via diameter and hole"), "circle.circle", enabled: true) {
                     store.activeSheet = .via
                 }
             }
@@ -51,7 +53,7 @@ struct EditBar: View {
             separator
 
             Menu {
-                Picker("Izgara", selection: $store.gridStep) {
+                Picker("Grid", selection: $store.gridStep) {
                     ForEach(gridSteps, id: \.self) { step in
                         Text(gridTitle(step)).tag(step)
                     }
@@ -64,7 +66,7 @@ struct EditBar: View {
                 }
                 .frame(minWidth: 44, minHeight: 36)
             }
-            .accessibilityLabel("Izgara: \(gridTitle(store.gridStep))")
+            .accessibilityLabel("Grid: \(gridTitle(store.gridStep))")
 
             separator
 
@@ -72,13 +74,13 @@ struct EditBar: View {
                 Button {
                     store.save()
                 } label: {
-                    Label(store.canSaveInPlace ? "Kaydet" : "Kaydet…", systemImage: "square.and.arrow.down")
+                    Label(store.canSaveInPlace ? "Save" as LocalizedStringKey : "Save…", systemImage: "square.and.arrow.down")
                 }
 
                 Button {
                     store.saveAs()
                 } label: {
-                    Label("Farklı kaydet…", systemImage: "square.and.arrow.down.on.square")
+                    Label("Save as…", systemImage: "square.and.arrow.down.on.square")
                 }
             } label: {
                 ZStack(alignment: .topTrailing) {
@@ -96,13 +98,13 @@ struct EditBar: View {
                 store.save()
             }
             .disabled(!store.canEdit)
-            .accessibilityLabel(store.docState.modified ? "Kaydet (kaydedilmemiş değişiklik var)" : "Kaydet")
+            .accessibilityLabel(store.docState.modified ? "Save (unsaved changes)" as LocalizedStringKey : "Save")
 
             if store.isRebuilding {
                 ProgressView()
                     .controlSize(.small)
                     .frame(width: 28)
-                    .accessibilityLabel("Kart güncelleniyor")
+                    .accessibilityLabel("Updating the board")
             }
 
             Button {
@@ -113,7 +115,7 @@ struct EditBar: View {
                     .frame(minWidth: 36, minHeight: 36)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Düzenlemeyi bitir")
+            .accessibilityLabel("Finish editing")
         }
         .font(.title3)
         .padding(.horizontal, 10)
@@ -167,23 +169,23 @@ struct FieldEditSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Referans (ör. R12)", text: $reference)
+                    TextField("Reference (e.g. R12)", text: $reference)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
-                    TextField("Değer (ör. 10k)", text: $value)
+                    TextField("Value (e.g. 10k)", text: $value)
                         .autocorrectionDisabled()
                 } footer: {
-                    Text("Yazı konumu ve boyutu değişmez; yalnız metin güncellenir.")
+                    Text("Text position and size stay the same; only the text changes.")
                 }
             }
-            .navigationTitle("Referans ve değer")
+            .navigationTitle("Reference and value")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Vazgeç") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Uygula") {
+                    Button("Apply") {
                         store.setFields(reference: reference, value: value)
                         dismiss()
                     }
@@ -214,16 +216,15 @@ struct TrackWidthSheet: View {
             Form {
                 Section {
                     HStack {
-                        TextField("Genişlik", text: $text)
+                        TextField("Width", text: $text)
                             .keyboardType(.decimalPad)
-                        Text("mm").foregroundStyle(.secondary)
+                        Text(verbatim: "mm").foregroundStyle(.secondary)
                     }
                 } footer: {
-                    Text("Yalnız seçili pist parçası değişir. Bağlı bakır bölgelerin dolgusu yeniden "
-                         + "hesaplanmaz; KiCad'de dolguyu yenilemeyi (B) unutma.")
+                    Text("Only the selected track segment changes. Copper zone fills are not recalculated; refill zones in KiCad (B).")
                 }
 
-                Section("Hazır değerler") {
+                Section("Presets") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 64))], spacing: 8) {
                         ForEach(presets, id: \.self) { p in
                             Button(formatMillimetres(p)) { text = formatMillimetres(p) }
@@ -233,14 +234,14 @@ struct TrackWidthSheet: View {
                     .padding(.vertical, 4)
                 }
             }
-            .navigationTitle("Pist genişliği")
+            .navigationTitle("Track width")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Vazgeç") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Uygula") {
+                    Button("Apply") {
                         if let w = parseMillimetres(text) {
                             store.setTrackWidth(w)
                         }
@@ -277,29 +278,29 @@ struct ViaSheet: View {
             Form {
                 Section {
                     HStack {
-                        Text("Çap")
-                        TextField("Çap", text: $sizeText)
+                        Text("Diameter")
+                        TextField("Diameter", text: $sizeText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
-                        Text("mm").foregroundStyle(.secondary)
+                        Text(verbatim: "mm").foregroundStyle(.secondary)
                     }
                     HStack {
-                        Text("Delik")
-                        TextField("Delik", text: $drillText)
+                        Text("Hole")
+                        TextField("Hole", text: $drillText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
-                        Text("mm").foregroundStyle(.secondary)
+                        Text(verbatim: "mm").foregroundStyle(.secondary)
                     }
                 } footer: {
-                    Text(valid || sizeText.isEmpty ? "Delik, via çapından küçük olmalı."
-                                                   : "Delik, via çapından küçük olmalı — değerleri kontrol et.")
+                    Text(valid || sizeText.isEmpty ? "The hole must be smaller than the via diameter." as LocalizedStringKey
+                                                   : "The hole must be smaller than the via diameter — check the values.")
                 }
 
-                Section("Hazır değerler") {
+                Section("Presets") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 96))], spacing: 8) {
                         ForEach(presets.indices, id: \.self) { i in
                             let p = presets[i]
-                            Button("\(formatMillimetres(p.0)) / \(formatMillimetres(p.1))") {
+                            Button("\(formatMillimetres(p.0)) / \(formatMillimetres(p.1))" as String) {
                                 sizeText = formatMillimetres(p.0)
                                 drillText = formatMillimetres(p.1)
                             }
@@ -313,10 +314,10 @@ struct ViaSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Vazgeç") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Uygula") {
+                    Button("Apply") {
                         if let s = parseMillimetres(sizeText), let d = parseMillimetres(drillText) {
                             store.setVia(size: s, drill: d)
                         }
@@ -353,7 +354,7 @@ struct ToastView: View {
                 .lineLimit(3)
 
             if toast.offersUndo && store.docState.canUndo {
-                Button("Geri al") {
+                Button("Undo") {
                     store.dismissToast()
                     store.undo()
                 }

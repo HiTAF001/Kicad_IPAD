@@ -22,7 +22,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             List {
-                Picker("Ara", selection: $scope) {
+                Picker("Search", selection: $scope) {
                     ForEach(Scope.allCases) { s in
                         Text(s.title).tag(s)
                     }
@@ -43,11 +43,11 @@ struct SearchView: View {
                         prompt: scope == .footprints ? "R12, U3, 10k…" : "GND, VCC, SDA…")
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
-            .navigationTitle("Ara")
+            .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Kapat") { dismiss() }
+                    Button("Close") { dismiss() }
                 }
             }
         }
@@ -58,7 +58,7 @@ struct SearchView: View {
         let matches = filteredFootprints(board)
 
         if matches.isEmpty {
-            Text("Eşleşen footprint yok")
+            Text("No matching footprint")
                 .foregroundStyle(.secondary)
         }
 
@@ -68,7 +68,7 @@ struct SearchView: View {
                 dismiss()
             } label: {
                 HStack {
-                    Text(fp.reference.isEmpty ? "(adsız)" : fp.reference)
+                    Text(fp.reference.isEmpty ? String(localized: "(unnamed)") : fp.reference)
                         .font(.body.monospaced())
                         .frame(minWidth: 70, alignment: .leading)
                     Text(fp.value)
@@ -76,7 +76,7 @@ struct SearchView: View {
                         .lineLimit(1)
                     Spacer()
                     if fp.back {
-                        Text("arka")
+                        Text("back")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -91,7 +91,7 @@ struct SearchView: View {
         let matches = filteredNets(board)
 
         if matches.isEmpty {
-            Text("Eşleşen net yok")
+            Text("No matching net")
                 .foregroundStyle(.secondary)
         }
 

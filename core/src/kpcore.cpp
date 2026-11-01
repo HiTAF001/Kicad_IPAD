@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "kpcore.h"
+#include "i18n.h"
 
 #include "board.h"
 #include "mesh.h"
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <new>
 #include <string>
+#include <unordered_map>
 
 struct kp_board
 {
@@ -68,7 +70,7 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
 {
     if( !data || length == 0 )
     {
-        copyError( error, error_size, "Dosya boş" );
+        copyError( error, error_size, kp::Tr( "The file is empty" ) );
         return nullptr;
     }
 
@@ -76,7 +78,7 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
 
     if( !b )
     {
-        copyError( error, error_size, "Bellek yetersiz" );
+        copyError( error, error_size, kp::Tr( "Out of memory" ) );
         return nullptr;
     }
 
@@ -148,13 +150,13 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
     }
     catch( const kp::ParseError& e )
     {
-        copyError( error, error_size, std::string( "Dosya okunamadı: " ) + e.what() );
+        copyError( error, error_size, kp::TrF( "The file could not be read: {0}", { e.what() } ) );
         delete b;
         return nullptr;
     }
     catch( const std::bad_alloc& )
     {
-        copyError( error, error_size, "Bellek yetersiz (kart çok büyük)" );
+        copyError( error, error_size, kp::Tr( "Out of memory (the board is too large)" ) );
         delete b;
         return nullptr;
     }
@@ -526,6 +528,43 @@ extern "C" int32_t kp_board_footprint_pose( const kp_board* board, int32_t index
 }
 
 
+extern "C" void kp_set_translations( const char* const* keys, const char* const* values, int32_t count )
+{
+    std::unordered_map<std::string, std::string> table;
+
+    for( int32_t i = 0; keys && values && i < count; ++i )
+    {
+        if( keys[i] && values[i] )
+            table[keys[i]] = values[i];
+    }
+
+    kp::SetTranslations( std::move( table ) );
+}
+
+
+extern "C" int32_t kp_board_footprint_pad_count( const kp_board* board, int32_t index )
+{
+    if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
+        return 0;
+
+    return board->board.footprints[(size_t) index].padCount;
+}
+
+
+extern "C" int32_t kp_board_net_pad_count( const kp_board* board, int32_t net )
+{
+    if( !board || net <= 0 )
+        return 0;
+
+    int32_t n = 0;
+
+    for( const kp::Pad& p : board->board.pads )
+        n += p.net == net;
+
+    return n;
+}
+
+
 extern "C" double kp_board_track_width( const kp_board* board, const kp_item* item )
 {
     if( !board || !item )
@@ -580,7 +619,7 @@ extern "C" kp_doc* kp_doc_create( const char* data, size_t length, char* error, 
 {
     if( !data || length == 0 )
     {
-        copyError( error, error_size, "Dosya boş" );
+        copyError( error, error_size, kp::Tr( "The file is empty" ) );
         return nullptr;
     }
 
@@ -588,7 +627,7 @@ extern "C" kp_doc* kp_doc_create( const char* data, size_t length, char* error, 
 
     if( !d )
     {
-        copyError( error, error_size, "Bellek yetersiz" );
+        copyError( error, error_size, kp::Tr( "Out of memory" ) );
         return nullptr;
     }
 
@@ -598,7 +637,7 @@ extern "C" kp_doc* kp_doc_create( const char* data, size_t length, char* error, 
     }
     catch( const std::exception& e )
     {
-        copyError( error, error_size, std::string( "Dosya okunamadı: " ) + e.what() );
+        copyError( error, error_size, kp::TrF( "The file could not be read: {0}", { e.what() } ) );
         delete d;
         return nullptr;
     }
@@ -617,7 +656,7 @@ extern "C" kp_board* kp_board_load_doc( kp_doc* doc, char* error, size_t error_s
 {
     if( !doc )
     {
-        copyError( error, error_size, "Belge yok" );
+        copyError( error, error_size, kp::Tr( "No document" ) );
         return nullptr;
     }
 
@@ -693,13 +732,13 @@ static int32_t runEdit( kp_doc* doc, const kp_board* board, char* error, size_t 
 {
     if( !doc || !board )
     {
-        copyError( error, error_size, "Belge yok" );
+        copyError( error, error_size, kp::Tr( "No document" ) );
         return 0;
     }
 
     if( !kp_doc_board_current( doc, board ) )
     {
-        copyError( error, error_size, "Kart görünümü güncel değil, biraz bekleyip tekrar dene" );
+        copyError( error, error_size, kp::Tr( "The board view is not up to date yet; wait a moment and try again" ) );
         return 0;
     }
 
@@ -717,7 +756,7 @@ static int32_t runEdit( kp_doc* doc, const kp_board* board, char* error, size_t 
     catch( const std::exception& e )
     {
         doc->doc.Cancel();
-        copyError( error, error_size, std::string( "Düzenleme hatası: " ) + e.what() );
+        copyError( error, error_size, kp::TrF( "Edit error: {0}", { e.what() } ) );
         return 0;
     }
 

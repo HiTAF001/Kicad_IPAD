@@ -48,7 +48,7 @@ final class BoardDocument: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw NetloomError.message(message.isEmpty ? "Dosya açılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? String(localized: "The file could not be opened.") : message)
         }
 
         return BoardDocument(handle: handle)
@@ -93,7 +93,7 @@ struct DocumentState: Equatable {
     }
 }
 
-/// File wrapper for "Farklı kaydet" (fileExporter).
+/// File wrapper for "Save as" (fileExporter).
 struct KiCadBoardFile: FileDocument {
     static var readableContentTypes: [UTType] { [.kicadPCB] }
     static var writableContentTypes: [UTType] { [.kicadPCB] }
@@ -124,7 +124,7 @@ enum FileWriter {
         }
 
         var coordinationError: NSError?
-        var result: Result<Void, Error> = .failure(NetloomError.message("Dosya yazılamadı."))
+        var result: Result<Void, Error> = .failure(NetloomError.message(String(localized: "The file could not be written.")))
 
         NSFileCoordinator().coordinate(writingItemAt: url, options: [.forReplacing],
                                        error: &coordinationError) { writeURL in

@@ -28,6 +28,13 @@ jobs:
       - name: Load sample boards
         run: ctest --test-dir build --output-on-failure
 
+      - name: Translations complete (11 languages)
+        run: |
+          python3 tools/i18n/generate.py --check
+          # the generated .strings files must match the tables
+          python3 tools/i18n/generate.py
+          git diff --exit-code App/Localization
+
       - name: Render previews
         run: |
           mkdir -p previews
@@ -187,6 +194,9 @@ jobs:
           shoot 10-search -NetloomOpenSample pic_programmer -NetloomPanel search
           shoot 11-edit-rotate -NetloomOpenSample pic_programmer -NetloomDemo edit
           shoot 12-edit-fields -NetloomOpenSample pic_programmer -NetloomDemo edit -NetloomPanel fields
+          shoot 13-japanese -NetloomOpenSample pic_programmer -NetloomDemo select -AppleLanguages "(ja)" -AppleLocale ja_JP
+          shoot 14-german-edit -NetloomOpenSample pic_programmer -NetloomDemo edit -AppleLanguages "(de)" -AppleLocale de_DE
+          shoot 15-turkish-help -NetloomOpenSample pic_programmer -NetloomPanel help -AppleLanguages "(tr)" -AppleLocale tr_TR
           xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "Netloom"' --style compact > shots/app-log.txt 2>&1 || true
           ls -la shots
 

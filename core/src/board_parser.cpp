@@ -11,6 +11,7 @@
  * (pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp).
  */
 #include "board.h"
+#include "i18n.h"
 #include "sexpr.h"
 
 #include <algorithm>
@@ -462,7 +463,7 @@ int BoardParser::layerRef( std::string_view aName, bool aWarn )
     }
 
     if( aWarn )
-        warn( "Bilinmeyen katman: " + name );
+        warn( TrF( "Unknown layer: {0}", { name } ) );
 
     return -1;
 }
@@ -608,13 +609,12 @@ void BoardParser::Parse( const char* aData, size_t aLen )
     if( root != "kicad_pcb" )
     {
         if( root == "footprint" || root == "module" )
-            throw ParseError( "Bu bir footprint dosyası (.kicad_mod), kart dosyası değil", 0 );
+            throw ParseError( Tr( "This is a footprint file (.kicad_mod), not a board file" ), 0 );
 
         if( root == "kicad_sch" || root == "kicad_symbol_lib" )
-            throw ParseError( "Bu bir şema/sembol dosyası. Netloom şimdilik yalnızca kart "
-                              "(.kicad_pcb) dosyalarını açıyor.", 0 );
+            throw ParseError( Tr( "This is a schematic or symbol file. Netloom opens board (.kicad_pcb) files for now." ), 0 );
 
-        throw ParseError( "Bu bir KiCad kart dosyası değil (kök: '" + std::string( root ) + "')", 0 );
+        throw ParseError( TrF( "This is not a KiCad board file (root: '{0}')", { std::string( root ) } ), 0 );
     }
 
     SPool pool;
@@ -676,7 +676,7 @@ void BoardParser::Parse( const char* aData, size_t aLen )
         }
         catch( const std::exception& e )
         {
-            warn( std::string( "Öğe atlandı (" ) + std::string( h ) + "): " + e.what() );
+            warn( TrF( "Item skipped ({0}): {1}", { std::string( h ), e.what() } ) );
         }
     }
 
@@ -725,7 +725,7 @@ void BoardParser::parseLayers( N aNode )
 
             if( canonical.empty() || !describeLayer( canonical, L ) )
             {
-                warn( "Tanınmayan katman tanımı: " + name );
+                warn( TrF( "Unrecognized layer definition: {0}", { name } ) );
                 continue;
             }
 
@@ -1593,7 +1593,7 @@ void BoardParser::parseFootprint( N aNode )
         }
         catch( const std::exception& e )
         {
-            warn( std::string( "Footprint öğesi atlandı: " ) + e.what() );
+            warn( TrF( "Footprint item skipped: {0}", { e.what() } ) );
         }
     }
 }

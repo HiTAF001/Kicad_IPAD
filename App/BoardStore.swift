@@ -45,7 +45,7 @@ struct Toast: Identifiable, Equatable {
     let id: Int
     let text: String
     let isError: Bool
-    /// Offer "Geri al" next to the message.
+    /// Offer "Undo" next to the message.
     let offersUndo: Bool
 }
 
@@ -68,7 +68,7 @@ let gridSteps: [Double] = [0, 0.1, 0.25, 0.5, 1.0, 0.635, 1.27, 2.54]
 
 func gridTitle(_ step: Double) -> String {
     if step <= 0 {
-        return "Izgara kapalı"
+        return String(localized: "Grid off")
     }
 
     let mil = step / 0.0254
@@ -148,8 +148,8 @@ final class BoardStore: ObservableObject {
     @Published var autoPanel: String?
 
     let samples = [
-        SampleBoard(id: "pic_programmer", title: "PIC programlayıcı (2 katman)"),
-        SampleBoard(id: "ecc83-pp", title: "ECC83 tüp amfi (2 katman)")
+        SampleBoard(id: "pic_programmer", title: String(localized: "PIC programmer (2 layers)")),
+        SampleBoard(id: "ecc83-pp", title: String(localized: "ECC83 tube amplifier (2 layers)"))
     ]
 
     private var launchHandled = false
@@ -158,6 +158,8 @@ final class BoardStore: ObservableObject {
     private var pendingActions: [String] = []
 
     init() {
+        CoreLocalization.install()
+
         let saved = UserDefaults.standard.double(forKey: "NetloomGridStep")
 
         if UserDefaults.standard.object(forKey: "NetloomGridStep") != nil, saved >= 0 {
@@ -188,7 +190,7 @@ final class BoardStore: ObservableObject {
 
     var canEdit: Bool { document != nil && board != nil && !isRebuilding && !isLoading }
 
-    var documentName: String { board?.name ?? "kart" }
+    var documentName: String { board?.name ?? "board" }
 
     // MARK: - Launch arguments (CI screenshots)
 
@@ -218,8 +220,7 @@ final class BoardStore: ObservableObject {
 
         // pick the footprint with the most pads as a stable, interesting target
         let pads = board.footprints.map { fp -> (Int, Int) in
-            let n = Int(board.describe(.footprint(Int32(fp.id))).value(for: "Pad sayısı") ?? "0") ?? 0
-            return (fp.id, n)
+            (fp.id, board.footprintPadCount(fp.id))
         }
         let target = pads.max { $0.1 < $1.1 }?.0 ?? 0
 
@@ -229,8 +230,7 @@ final class BoardStore: ObservableObject {
 
         case "net":
             if let busiest = board.nets.max(by: { a, b in
-                (Int(board.describeNet(Int32(a.id)).value(for: "Pad") ?? "0") ?? 0)
-                    < (Int(board.describeNet(Int32(b.id)).value(for: "Pad") ?? "0") ?? 0)
+                board.netPadCount(a.id) < board.netPadCount(b.id)
             }) {
                 selectNet(busiest.id)
             }
@@ -279,7 +279,7 @@ final class BoardStore: ObservableObject {
         }
 
         guard let url = Bundle.main.url(forResource: sample.id, withExtension: "kicad_pcb") else {
-            errorMessage = "Örnek dosya uygulama paketinde bulunamadı."
+            errorMessage = String(localized: "The sample file is missing from the app.")
             return
         }
 
@@ -717,7 +717,7 @@ final class BoardStore: ObservableObject {
 
         case .failure(let error):
             // keep the old board on screen and take the edit back
-            showToast("Kart güncellenemedi: \(error.localizedDescription)", isError: true)
+            showToast(String(localized: "The board could not be updated: \(error.localizedDescription)"), isError: true)
 
             if retryAfterFailure, let document, document.undo() {
                 rebuild(.none, retryAfterFailure: false)
@@ -775,21 +775,21 @@ final class BoardStore: ObservableObject {
         }
     }
 
-    /// What "Sil" would remove, as shown on the button / confirmation.
+    /// What "Delete" would remove, as shown on the button / confirmation.
     var deleteTarget: (item: PickedItem, title: String)? {
         guard let board, let sel = selection else { return nil }
 
         if let fp = editFootprint {
             let ref = fp < board.footprints.count ? board.footprints[fp].reference : ""
-            return (.footprint(Int32(fp)), ref.isEmpty ? "Footprint" : ref)
+            return (.footprint(Int32(fp)), ref.isEmpty ? String(localized: "Footprint") : ref)
         }
 
         switch sel.item.itemType {
-        case .track, .arc: return (sel.item, "Pist")
-        case .via: return (sel.item, "Via")
-        case .zone: return (sel.item, "Bölge")
-        case .shape: return (sel.item, "Çizim")
-        case .text: return (sel.item, "Yazı")
+        case .track, .arc: return (sel.item, String(localized: "Track"))
+        case .via: return (sel.item, String(localized: "Via"))
+        case .zone: return (sel.item, String(localized: "Zone"))
+        case .shape: return (sel.item, String(localized: "Graphic"))
+        case .text: return (sel.item, String(localized: "Text"))
         default: return nil
         }
     }
@@ -799,7 +799,7 @@ final class BoardStore: ObservableObject {
 
         if perform(.none, { board, doc in try board.delete(target.item, in: doc) }) {
             selection = nil
-            showToast("\(target.title) silindi", offersUndo: true)
+            showToast(String(localized: "\(target.title) deleted"), offersUndo: true)
         }
     }
 
@@ -849,7 +849,7 @@ final class BoardStore: ObservableObject {
         rebuild(reselect)
 
         if !label.isEmpty {
-            showToast("Geri alındı: \(label)")
+            showToast(String(localized: "Undone: \(label)"))
         }
     }
 
@@ -864,7 +864,7 @@ final class BoardStore: ObservableObject {
         rebuild(reselect)
 
         if !label.isEmpty {
-            showToast("Yinelendi: \(label)")
+            showToast(String(localized: "Redone: \(label)"))
         }
     }
 
@@ -916,9 +916,9 @@ final class BoardStore: ObservableObject {
             try FileWriter.write(document.text(), to: url)
             document.markSaved()
             docState = DocumentState(document)
-            showToast("Kaydedildi: \(url.lastPathComponent)")
+            showToast(String(localized: "Saved: \(url.lastPathComponent)"))
         } catch {
-            showToast("Kaydedilemedi: \(error.localizedDescription). \"Farklı kaydet\" ile başka yere kaydedebilirsin.",
+            showToast(String(localized: "Could not save: \(error.localizedDescription). Use \"Save as\" to save it somewhere else."),
                       isError: true)
         }
     }
@@ -940,10 +940,10 @@ final class BoardStore: ObservableObject {
             }
 
             fileURL = url
-            showToast("Kaydedildi: \(url.lastPathComponent)")
+            showToast(String(localized: "Saved: \(url.lastPathComponent)"))
 
         case .failure(let error):
-            showToast("Kaydedilemedi: \(error.localizedDescription)", isError: true)
+            showToast(String(localized: "Could not save: \(error.localizedDescription)"), isError: true)
         }
     }
 }
@@ -959,7 +959,7 @@ enum FileReader {
         }
 
         var coordinationError: NSError?
-        var result: Result<Data, Error> = .failure(NetloomError.message("Dosya okunamadı."))
+        var result: Result<Data, Error> = .failure(NetloomError.message(String(localized: "The file could not be read.")))
 
         NSFileCoordinator().coordinate(readingItemAt: url, options: [.withoutChanges],
                                        error: &coordinationError) { readURL in

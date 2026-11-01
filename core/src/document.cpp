@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "document.h"
+#include "i18n.h"
 #include "sexpr.h"
 
 namespace kp
@@ -123,7 +124,7 @@ void Document::Replace( int aIndex, const std::string& aBody )
     bool autoStep = !m_inStep;
 
     if( autoStep )
-        Begin( "Değişiklik" );
+        Begin( Tr( "Change" ) );
 
     record( aIndex, aBody, false );
 
@@ -140,7 +141,7 @@ void Document::Remove( int aIndex )
     bool autoStep = !m_inStep;
 
     if( autoStep )
-        Begin( "Silme" );
+        Begin( Tr( "Delete" ) );
 
     record( aIndex, m_items[(size_t) aIndex].body, true );
 
@@ -154,7 +155,7 @@ int Document::Append( const std::string& aBody )
     bool autoStep = !m_inStep;
 
     if( autoStep )
-        Begin( "Ekleme" );
+        Begin( Tr( "Add" ) );
 
     DocItem it;
     it.ws = "\n\t";

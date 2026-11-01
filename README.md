@@ -54,6 +54,9 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
   - kilitli öğeler düzenlenmez (KiCad'deki gibi)
 - **Ratsnest:** bağlanmamış pad'ler arasında ince çizgiler; her düzenlemeden sonra yeniden
   hesaplanır. Kart bilgisinde eksik bağlantı sayısı görünür.
+- **11 dil:** Türkçe, İngilizce, Almanca, Fransızca, İspanyolca, İtalyanca, Fince, Rusça, Japonca,
+  Korece, Çince (basitleştirilmiş). Uygulama cihazın diline göre açılır; listede olmayan dillerde
+  İngilizce başlar. Bilgi kartındaki öğe açıklamaları ve hata mesajları da çevrilidir.
 - Kart bilgisi ekranı (ölçüler, eleman sayıları, KiCad sürümü).
 - Uygulamanın içinde iki örnek kart (KiCad demolarından).
 
@@ -160,6 +163,17 @@ Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
   her pad'in konumu ve açısı, referans/değer yazılarının konumu ve açısı): 0 fark.
 - Tüm düzenlemeler geri alınınca dosya orijinaliyle bayt bayt aynı (ctest).
 
+### Çeviriler
+
+Arayüz metinleri kaynak kodda İngilizcedir; çeviriler tek bir tabloda durur:
+
+- `tools/i18n/ui.tsv` (arayüz) ve `tools/i18n/core.tsv` (çekirdeğin açıklama ve hata metinleri)
+- `python3 tools/i18n/generate.py` → `App/Localization/*.lproj/{Localizable,Core}.strings`
+- `--check` koddaki her metnin her dile çevrildiğini ve yer tutucuların (`%@`, `{0}`) tuttuğunu
+  denetler; CI bunu her derlemede çalıştırır.
+- Çekirdek metinlerini masaüstünde denemek için:
+  `KPCLI_STRINGS=App/Localization/tr.lproj/Core.strings ./build/kpcli pick ...`
+
 ### Mac'te derlemek (isteğe bağlı)
 
 ```sh
@@ -178,6 +192,8 @@ open Netloom.xcodeproj
 - Faz 8: sıfırdan proje: kart kenarı, footprint kütüphanesi, yerleştirme
 
 ## Lisans
+
+<img src="branding/seyhan-labs-mark.png" width="72" align="right" alt="Seyhan Labs">
 
 Netloom © 2026 Seyhan Labs. Bu depodaki kaynak kod **GPL-3.0-or-later** ile yayınlanır
 (bkz. `LICENSE`). Telif hakkının tamamı Seyhan Labs'e ait olduğu için uygulama ayrıca başka

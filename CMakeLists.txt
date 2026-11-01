@@ -18,6 +18,7 @@ add_library( kpcore STATIC
     core/src/connectivity.cpp
     core/src/document.cpp
     core/src/edit.cpp
+    core/src/i18n.cpp
     core/src/kpcore.cpp
 )
 target_include_directories( kpcore PUBLIC core/include PRIVATE core/src )

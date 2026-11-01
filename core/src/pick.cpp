@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "pick.h"
+#include "i18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -274,7 +275,11 @@ struct Info
     {
     }
 
-    void add( const std::string& k, const std::string& v )
+    /// Key from the code: translated.
+    void add( const char* k, const std::string& v ) { addRaw( Tr( k ), v ); }
+
+    /// Key from the file (e.g. a footprint field name): shown as is.
+    void addRaw( const std::string& k, const std::string& v )
     {
         if( v.empty() )
             return;
@@ -286,7 +291,7 @@ struct Info
 std::string netName( const Board& b, int net )
 {
     if( net <= 0 || net >= (int) b.nets.size() || b.nets[(size_t) net].empty() )
-        return "(bağlantısız)";
+        return Tr( "(no net)" );
 
     return b.nets[(size_t) net];
 }
@@ -318,7 +323,7 @@ std::string layerList( const Board& b, const std::vector<int>& ls )
     std::string out;
 
     if( allCopper )
-        out = "Tüm bakır (" + std::to_string( copper ) + ")";
+        out = TrF( "All copper ({0})", { std::to_string( copper ) } );
 
     for( int l : ls )
     {
@@ -776,46 +781,46 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             fpLine = F.value.empty() ? F.reference : F.reference + " (" + F.value + ")";
         }
 
-        std::string title = "Pad " + ( ref.empty() ? p.number : ref + "-" + p.number );
+        std::string title = TrF( "Pad {0}", { ref.empty() ? p.number : ref + "-" + p.number } );
         Info        info( title );
         info.add( "Footprint", fpLine );
         info.add( "Net", netName( b, p.net ) );
-        info.add( "Pin işlevi", p.pinFunction );
-        info.add( "Pin tipi", p.pinType );
+        info.add( "Pin function", p.pinFunction );
+        info.add( "Pin type", p.pinType );
 
         const char* attr = p.attr == PadAttr::SMD    ? "SMD"
-                           : p.attr == PadAttr::PTH  ? "Delikli (kaplamalı)"
-                           : p.attr == PadAttr::NPTH ? "Delikli (kaplamasız)"
-                                                     : "Konnektör";
-        info.add( "Tür", attr );
+                           : p.attr == PadAttr::PTH  ? N_( "Through-hole (plated)" )
+                           : p.attr == PadAttr::NPTH ? N_( "Through-hole (non-plated)" )
+                                                     : N_( "Edge connector" );
+        info.add( "Type", Tr( attr ) );
 
-        const char* shape = "Daire";
+        const char* shape = N_( "Circle" );
 
         switch( p.geom.shape )
         {
-        case PadShape::CIRCLE: shape = "Daire"; break;
-        case PadShape::RECT: shape = "Dikdörtgen"; break;
-        case PadShape::OVAL: shape = "Oval"; break;
-        case PadShape::TRAPEZOID: shape = "Yamuk"; break;
-        case PadShape::ROUNDRECT: shape = "Yuvarlak köşeli"; break;
-        case PadShape::CHAMFERED_RECT: shape = "Pahlı"; break;
-        case PadShape::CUSTOM: shape = "Özel şekil"; break;
+        case PadShape::CIRCLE: shape = N_( "Circle" ); break;
+        case PadShape::RECT: shape = N_( "Rectangle" ); break;
+        case PadShape::OVAL: shape = N_( "Oval" ); break;
+        case PadShape::TRAPEZOID: shape = N_( "Trapezoid" ); break;
+        case PadShape::ROUNDRECT: shape = N_( "Rounded rectangle" ); break;
+        case PadShape::CHAMFERED_RECT: shape = N_( "Chamfered rectangle" ); break;
+        case PadShape::CUSTOM: shape = N_( "Custom shape" ); break;
         }
 
-        info.add( "Şekil", shape );
-        info.add( "Boyut", num( p.geom.size.x ) + " × " + num( p.geom.size.y ) + " mm" );
+        info.add( "Shape", Tr( shape ) );
+        info.add( "Size", num( p.geom.size.x ) + " × " + num( p.geom.size.y ) + " mm" );
 
         if( p.drill.x > 0 )
         {
             if( p.drillOval && std::fabs( p.drill.x - p.drill.y ) > 1e-9 )
-                info.add( "Delik", "oval " + num( p.drill.x ) + " × " + num( p.drill.y ) + " mm" );
+                info.add( "Hole", TrF( "oval {0}", { num( p.drill.x ) + " × " + num( p.drill.y ) + " mm" } ) );
             else
-                info.add( "Delik", "Ø " + mm( p.drill.x ) );
+                info.add( "Hole", "Ø " + mm( p.drill.x ) );
         }
 
-        info.add( "Açı", deg( p.angle ) );
-        info.add( "Konum", xy( p.pos ) );
-        info.add( "Katmanlar", layerList( b, p.layers ) );
+        info.add( "Angle", deg( p.angle ) );
+        info.add( "Position", xy( p.pos ) );
+        info.add( "Layers", layerList( b, p.layers ) );
         return info.text;
     }
 
@@ -825,27 +830,27 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Via&  v = b.vias[(size_t) idx];
-        const char* kind = v.type == ViaType::BLIND    ? "Kör (blind)"
-                           : v.type == ViaType::BURIED ? "Gömülü (buried)"
-                           : v.type == ViaType::MICRO  ? "Mikro"
-                                                       : "Geçişli (through)";
-        Info info( "Via" );
+        const char* kind = v.type == ViaType::BLIND    ? N_( "Blind" )
+                           : v.type == ViaType::BURIED ? N_( "Buried" )
+                           : v.type == ViaType::MICRO  ? N_( "Micro" )
+                                                       : N_( "Through" );
+        Info info( Tr( "Via" ) );
         info.add( "Net", netName( b, v.net ) );
-        info.add( "Tür", kind );
-        info.add( "Çap", mm( v.size ) );
-        info.add( "Delik", "Ø " + mm( v.drill ) );
-        info.add( "Halka", mm( ( v.size - v.drill ) / 2 ) );
+        info.add( "Type", Tr( kind ) );
+        info.add( "Diameter", mm( v.size ) );
+        info.add( "Hole", "Ø " + mm( v.drill ) );
+        info.add( "Annular ring", mm( ( v.size - v.drill ) / 2 ) );
 
         int oa, ob;
         viaSpan( b, v, oa, ob );
 
         if( !b.copperStack.empty() )
         {
-            info.add( "Katmanlar", b.layers[(size_t) b.copperStack[(size_t) oa]].canonical + " → "
+            info.add( "Layers", b.layers[(size_t) b.copperStack[(size_t) oa]].canonical + " → "
                                            + b.layers[(size_t) b.copperStack[(size_t) ob]].canonical );
         }
 
-        info.add( "Konum", xy( v.pos ) );
+        info.add( "Position", xy( v.pos ) );
         return info.text;
     }
 
@@ -855,17 +860,17 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Track& t = b.tracks[(size_t) idx];
-        Info         info( "Pist" );
+        Info         info( Tr( "Track" ) );
         info.add( "Net", netName( b, t.net ) );
-        info.add( "Katman", layerName( b, t.layer ) );
-        info.add( "Genişlik", mm( t.width ) );
-        info.add( "Uzunluk", mm( std::hypot( t.end.x - t.start.x, t.end.y - t.start.y ) ) );
+        info.add( "Layer", layerName( b, t.layer ) );
+        info.add( "Width", mm( t.width ) );
+        info.add( "Length", mm( std::hypot( t.end.x - t.start.x, t.end.y - t.start.y ) ) );
 
         if( t.net > 0 )
-            info.add( "Netin toplam pisti", mm( netTrackLength( b, t.net ) ) );
+            info.add( "Net track length", mm( netTrackLength( b, t.net ) ) );
 
-        info.add( "Başlangıç", xy( t.start ) );
-        info.add( "Bitiş", xy( t.end ) );
+        info.add( "Start", xy( t.start ) );
+        info.add( "End", xy( t.end ) );
         return info.text;
     }
 
@@ -875,17 +880,17 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const ArcTrack& a = b.arcs[(size_t) idx];
-        Info            info( "Yay pist" );
+        Info            info( Tr( "Arc track" ) );
         info.add( "Net", netName( b, a.net ) );
-        info.add( "Katman", layerName( b, a.layer ) );
-        info.add( "Genişlik", mm( a.width ) );
-        info.add( "Uzunluk", mm( arcLength( a ) ) );
+        info.add( "Layer", layerName( b, a.layer ) );
+        info.add( "Width", mm( a.width ) );
+        info.add( "Length", mm( arcLength( a ) ) );
 
         if( a.net > 0 )
-            info.add( "Netin toplam pisti", mm( netTrackLength( b, a.net ) ) );
+            info.add( "Net track length", mm( netTrackLength( b, a.net ) ) );
 
-        info.add( "Başlangıç", xy( a.start ) );
-        info.add( "Bitiş", xy( a.end ) );
+        info.add( "Start", xy( a.start ) );
+        info.add( "End", xy( a.end ) );
         return info.text;
     }
 
@@ -895,14 +900,14 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Footprint& F = b.footprints[(size_t) idx];
-        Info             info( F.reference.empty() ? "Footprint" : F.reference );
-        info.add( "Değer", F.value );
-        info.add( "Kütüphane", F.libId );
-        info.add( "Taraf", F.back ? "Arka (B)" : "Ön (F)" );
-        info.add( "Konum", xy( F.pos ) );
-        info.add( "Açı", deg( F.angle ) );
-        info.add( "Pad sayısı", std::to_string( F.padCount ) );
-        info.add( "Boyut", num( F.localBox.maxX - F.localBox.minX ) + " × "
+        Info             info( F.reference.empty() ? Tr( "Footprint" ) : F.reference );
+        info.add( "Value", F.value );
+        info.add( "Library", F.libId );
+        info.add( "Side", Tr( F.back ? N_( "Back (B)" ) : N_( "Front (F)" ) ) );
+        info.add( "Position", xy( F.pos ) );
+        info.add( "Angle", deg( F.angle ) );
+        info.add( "Pads", std::to_string( F.padCount ) );
+        info.add( "Size", num( F.localBox.maxX - F.localBox.minX ) + " × "
                                    + num( F.localBox.maxY - F.localBox.minY ) + " mm" );
 
         std::string attrs;
@@ -910,20 +915,20 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
         for( const std::string& a : F.attrs )
         {
             std::string t = a == "smd"                      ? "SMD"
-                            : a == "through_hole"           ? "Delikli"
-                            : a == "board_only"             ? "Sadece kart"
-                            : a == "exclude_from_pos_files" ? "Dizgi dosyasına girmez"
-                            : a == "exclude_from_bom"       ? "BOM'a girmez"
-                            : a == "dnp"                    ? "Takılmayacak (DNP)"
-                            : a == "allow_missing_courtyard" ? "Courtyard gerekmez"
-                            : a == "allow_soldermask_bridges" ? "Maske köprüsüne izin"
-                            : a == "virtual"                ? "Sanal"
+                            : a == "through_hole"           ? Tr( "Through-hole" )
+                            : a == "board_only"             ? Tr( "Board only" )
+                            : a == "exclude_from_pos_files" ? Tr( "Not in position files" )
+                            : a == "exclude_from_bom"       ? Tr( "Not in BOM" )
+                            : a == "dnp"                    ? Tr( "Do not populate (DNP)" )
+                            : a == "allow_missing_courtyard" ? Tr( "Courtyard not required" )
+                            : a == "allow_soldermask_bridges" ? Tr( "Solder mask bridges allowed" )
+                            : a == "virtual"                ? Tr( "Virtual" )
                                                             : a;
 
             attrs += ( attrs.empty() ? "" : ", " ) + t;
         }
 
-        info.add( "Özellikler", attrs );
+        info.add( "Attributes", attrs );
 
         // remaining fields, alphabetically
         std::set<std::string> keys;
@@ -941,8 +946,8 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
 
         for( const std::string& k : keys )
         {
-            std::string label = k == "Datasheet" ? "Datasheet" : k == "Description" ? "Açıklama" : k;
-            info.add( label, F.fields.at( k ) );
+            std::string label = k == "Datasheet" ? Tr( "Datasheet" ) : k == "Description" ? Tr( "Description" ) : k;
+            info.addRaw( label, F.fields.at( k ) );
         }
 
         return info.text;
@@ -954,9 +959,9 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Zone& z = b.zones[(size_t) idx];
-        Info        info( z.name.empty() ? "Bakır bölge" : "Bakır bölge: " + z.name );
+        Info        info( z.name.empty() ? std::string( Tr( "Copper zone" ) ) : TrF( "Copper zone: {0}", { z.name } ) );
         info.add( "Net", netName( b, z.net ) );
-        info.add( "Katmanlar", layerList( b, z.layers ) );
+        info.add( "Layers", layerList( b, z.layers ) );
 
         double area = 0;
 
@@ -967,12 +972,12 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
         }
 
         if( area > 0 )
-            info.add( "Dolu alan", num( area, 1 ) + " mm²" );
+            info.add( "Filled area", num( area, 1 ) + " mm²" );
 
-        info.add( "Kenar köşe sayısı", std::to_string( z.outline.size() ) );
+        info.add( "Outline corners", std::to_string( z.outline.size() ) );
 
         if( z.minThickness > 0 )
-            info.add( "Min. kalınlık", mm( z.minThickness ) );
+            info.add( "Min. thickness", mm( z.minThickness ) );
 
         return info.text;
     }
@@ -983,46 +988,46 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Shape& s = b.shapes[(size_t) idx];
-        const char*  kind = s.type == ShapeType::SEGMENT  ? "Çizgi"
-                            : s.type == ShapeType::ARC    ? "Yay"
-                            : s.type == ShapeType::CIRCLE ? "Daire"
-                            : s.type == ShapeType::RECT   ? "Dikdörtgen"
-                                                          : "Çokgen";
-        Info info( std::string( "Çizim: " ) + kind );
-        info.add( "Katman", layerName( b, s.layer ) );
-        info.add( "Kalınlık", mm( s.width ) );
+        const char*  kind = s.type == ShapeType::SEGMENT  ? N_( "Line" )
+                            : s.type == ShapeType::ARC    ? N_( "Arc" )
+                            : s.type == ShapeType::CIRCLE ? N_( "Circle" )
+                            : s.type == ShapeType::RECT   ? N_( "Rectangle" )
+                                                          : N_( "Polygon" );
+        Info info( TrF( "Graphic: {0}", { Tr( kind ) } ) );
+        info.add( "Layer", layerName( b, s.layer ) );
+        info.add( "Thickness", mm( s.width ) );
 
         switch( s.type )
         {
         case ShapeType::SEGMENT:
-            info.add( "Uzunluk", mm( std::hypot( s.end.x - s.start.x, s.end.y - s.start.y ) ) );
-            info.add( "Başlangıç", xy( s.start ) );
-            info.add( "Bitiş", xy( s.end ) );
+            info.add( "Length", mm( std::hypot( s.end.x - s.start.x, s.end.y - s.start.y ) ) );
+            info.add( "Start", xy( s.start ) );
+            info.add( "End", xy( s.end ) );
             break;
 
         case ShapeType::ARC:
         {
             Path pts;
             ArcToPoints( pts, s.start, s.mid, s.end, 0.0005 );
-            info.add( "Uzunluk", mm( pathLength( pts ) ) );
+            info.add( "Length", mm( pathLength( pts ) ) );
             break;
         }
 
         case ShapeType::CIRCLE:
-            info.add( "Merkez", xy( s.start ) );
-            info.add( "Yarıçap", mm( std::hypot( s.end.x - s.start.x, s.end.y - s.start.y ) ) );
+            info.add( "Center", xy( s.start ) );
+            info.add( "Radius", mm( std::hypot( s.end.x - s.start.x, s.end.y - s.start.y ) ) );
             break;
 
         case ShapeType::RECT:
-            info.add( "Boyut", num( std::fabs( s.end.x - s.start.x ) ) + " × "
+            info.add( "Size", num( std::fabs( s.end.x - s.start.x ) ) + " × "
                                        + num( std::fabs( s.end.y - s.start.y ) ) + " mm" );
             break;
 
         default:
-            info.add( "Köşe sayısı", std::to_string( s.poly.size() ) );
+            info.add( "Corners", std::to_string( s.poly.size() ) );
         }
 
-        info.add( "Dolgu", s.filled ? "Var" : "Yok" );
+        info.add( "Fill", Tr( s.filled ? N_( "Yes" ) : N_( "No" ) ) );
         return info.text;
     }
 
@@ -1032,18 +1037,18 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             break;
 
         const Text& t = b.texts[(size_t) idx];
-        Info        info( "Yazı" );
-        info.add( "İçerik", b.ResolveText( t.text, t.footprint, t.layer ) );
-        info.add( "Katman", layerName( b, t.layer ) );
-        info.add( "Boyut", num( t.sizeX ) + " × " + num( t.sizeY ) + " mm" );
-        info.add( "Kalınlık", mm( t.thickness ) );
-        info.add( "Açı", deg( t.angle ) );
+        Info        info( Tr( "Text" ) );
+        info.add( "Content", b.ResolveText( t.text, t.footprint, t.layer ) );
+        info.add( "Layer", layerName( b, t.layer ) );
+        info.add( "Size", num( t.sizeX ) + " × " + num( t.sizeY ) + " mm" );
+        info.add( "Thickness", mm( t.thickness ) );
+        info.add( "Angle", deg( t.angle ) );
 
         if( t.mirror )
-            info.add( "Ayna", "Evet" );
+            info.add( "Mirrored", Tr( "Yes" ) );
 
         if( !t.renderCache.empty() )
-            info.add( "Yazı tipi", "TrueType" );
+            info.add( "Font", "TrueType" );
 
         return info.text;
     }
@@ -1089,13 +1094,13 @@ std::string NetInfo( const Board& b, int net )
         zones += ( z.net == net && !z.keepout );
 
     Info info( b.nets[(size_t) net] );
-    info.add( "Pad", std::to_string( pads ) );
-    info.add( "Via", std::to_string( vias ) );
-    info.add( "Pist", std::to_string( tracks ) );
-    info.add( "Toplam pist uzunluğu", mm( netTrackLength( b, net ) ) );
+    info.add( "Pads", std::to_string( pads ) );
+    info.add( "Vias", std::to_string( vias ) );
+    info.add( "Tracks", std::to_string( tracks ) );
+    info.add( "Total track length", mm( netTrackLength( b, net ) ) );
 
     if( zones )
-        info.add( "Bakır bölge", std::to_string( zones ) );
+        info.add( "Copper zones", std::to_string( zones ) );
 
     std::string list;
     int         n = 0;
@@ -1111,7 +1116,7 @@ std::string NetInfo( const Board& b, int net )
         list += ( list.empty() ? "" : ", " ) + r;
     }
 
-    info.add( "Bağlı elemanlar", list );
+    info.add( "Components", list );
     return info.text;
 }
 

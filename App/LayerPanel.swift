@@ -9,37 +9,37 @@ struct LayerPanel: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Hızlı seçim") {
+                Section("Quick select") {
                     Button {
                         store.showAllLayers()
                     } label: {
-                        Label("Tüm katmanlar", systemImage: "square.3.layers.3d")
+                        Label("All layers", systemImage: "square.3.layers.3d")
                     }
 
                     Button {
                         store.showCopperOnly()
                     } label: {
-                        Label("Sadece bakır", systemImage: "bolt.horizontal")
+                        Label("Copper only", systemImage: "bolt.horizontal")
                     }
 
                     Button {
                         store.showSide(front: true)
                     } label: {
-                        Label("Sadece ön yüz", systemImage: "arrow.up.square")
+                        Label("Front side only", systemImage: "arrow.up.square")
                     }
 
                     Button {
                         store.showSide(front: false)
                     } label: {
-                        Label("Sadece arka yüz", systemImage: "arrow.down.square")
+                        Label("Back side only", systemImage: "arrow.down.square")
                     }
 
                     Toggle(isOn: $store.flipped) {
-                        Label("Alttan görünüm", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                        Label("Bottom view", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     }
                 }
 
-                Section("Nesneler") {
+                Section("Objects") {
                     ForEach(ObjectCategory.allCases) { category in
                         Toggle(isOn: Binding(get: { store.isShown(category) },
                                              set: { store.setShown(category, $0) })) {
@@ -53,24 +53,24 @@ struct LayerPanel: View {
                 let other = slots(of: Self.otherKinds, includeEmpty: false)
 
                 if !copper.isEmpty {
-                    Section("Bakır katmanlar") {
+                    Section("Copper layers") {
                         ForEach(copper) { slot in LayerRow(slot: slot) }
                     }
                 }
 
                 if !technical.isEmpty {
-                    Section("Teknik katmanlar") {
+                    Section("Technical layers") {
                         ForEach(technical) { slot in LayerRow(slot: slot) }
                     }
                 }
 
                 if !other.isEmpty {
-                    Section("Kenar ve kullanıcı katmanları") {
+                    Section("Edge and user layers") {
                         ForEach(other) { slot in LayerRow(slot: slot) }
                     }
                 }
             }
-            .navigationTitle("Katmanlar")
+            .navigationTitle("Layers")
             .navigationBarTitleDisplayMode(.inline)
         }
     }

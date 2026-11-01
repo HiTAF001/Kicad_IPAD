@@ -72,7 +72,7 @@ struct SelectionCard: View {
                 .foregroundStyle(.tint)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(selection.info.title.isEmpty ? "Seçim" : selection.info.title)
+                Text(selection.info.title.isEmpty ? String(localized: "Selection") : selection.info.title)
                     .font(.headline)
                     .lineLimit(2)
 
@@ -91,7 +91,7 @@ struct SelectionCard: View {
                     .foregroundStyle(Color(uiColor: .tertiaryLabel))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Kapat")
+            .accessibilityLabel("Close")
         }
         .padding(14)
     }
@@ -102,7 +102,7 @@ struct SelectionCard: View {
                 Button {
                     store.highlightWholeNet.toggle()
                 } label: {
-                    Label(store.highlightWholeNet ? "Öğeyi vurgula" : "Neti vurgula",
+                    Label(store.highlightWholeNet ? "Highlight item" : "Highlight net",
                           systemImage: store.highlightWholeNet ? "scope" : "point.3.connected.trianglepath.dotted")
                         .font(.callout)
                 }
@@ -112,7 +112,7 @@ struct SelectionCard: View {
             Button {
                 store.focusOnSelection()
             } label: {
-                Label("Odaklan", systemImage: "viewfinder")
+                Label("Focus", systemImage: "viewfinder")
                     .font(.callout)
             }
             .buttonStyle(.bordered)
@@ -126,7 +126,7 @@ struct SelectionCard: View {
                         .font(.callout)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Altındaki öğe")
+                .accessibilityLabel("Item underneath")
             }
 
             Spacer(minLength: 0)
@@ -136,15 +136,15 @@ struct SelectionCard: View {
 
     private var kindName: String {
         switch selection.item.itemType {
-        case .pad: return "Pad"
-        case .via: return "Via"
-        case .track: return "Pist"
-        case .arc: return "Yay pist"
-        case .footprint: return "Footprint"
-        case .zone: return "Bakır bölge"
-        case .shape: return "Çizim"
-        case .text: return "Yazı"
-        case .nothing: return "Net"
+        case .pad: return String(localized: "Pad")
+        case .via: return String(localized: "Via")
+        case .track: return String(localized: "Track")
+        case .arc: return String(localized: "Arc track")
+        case .footprint: return String(localized: "Footprint")
+        case .zone: return String(localized: "Copper zone")
+        case .shape: return String(localized: "Graphic")
+        case .text: return String(localized: "Text")
+        case .nothing: return String(localized: "Net")
         }
     }
 
@@ -195,14 +195,14 @@ struct MeasureBar: View {
                     .fontWeight(.semibold)
 
                 if store.measureSnapA || store.measureSnapB {
-                    Text("pad/via merkezine tuttu")
+                    Text("snapped to pad/via centre")
                         .font(.caption)
                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
             } else if store.measureA != nil {
-                Text("İkinci noktaya dokun")
+                Text("Tap the second point")
             } else {
-                Text("Ölçmek için ilk noktaya dokun (pad ve via merkezlerine tutunur)")
+                Text("Tap the first point to measure (snaps to pad and via centres)")
             }
 
             Button {
@@ -212,7 +212,7 @@ struct MeasureBar: View {
             }
             .buttonStyle(.borderless)
             .disabled(store.measureA == nil)
-            .accessibilityLabel("Ölçümü sıfırla")
+            .accessibilityLabel("Reset measurement")
 
             Button {
                 store.measureMode = false
@@ -221,7 +221,7 @@ struct MeasureBar: View {
                     .foregroundStyle(Color.secondary)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Ölçümü kapat")
+            .accessibilityLabel("Close measurement")
         }
         .font(.callout)
         .padding(.horizontal, 14)

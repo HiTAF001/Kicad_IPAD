@@ -41,15 +41,15 @@ enum ObjectCategory: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .tracks: return "Pistler"
-        case .vias: return "Via'lar"
-        case .pads: return "Pad'ler"
-        case .zones: return "Bakır bölgeler"
-        case .graphics: return "Çizimler"
-        case .texts: return "Yazılar"
-        case .holes: return "Delikler"
-        case .labels: return "Pad numarası ve net adları"
-        case .ratsnest: return "Bağlanmamış bağlantılar (ratsnest)"
+        case .tracks: return String(localized: "Tracks")
+        case .vias: return String(localized: "Vias")
+        case .pads: return String(localized: "Pads")
+        case .zones: return String(localized: "Copper zones")
+        case .graphics: return String(localized: "Graphics")
+        case .texts: return String(localized: "Texts")
+        case .holes: return String(localized: "Holes")
+        case .labels: return String(localized: "Pad numbers and net names")
+        case .ratsnest: return String(localized: "Unconnected (ratsnest)")
         }
     }
 
@@ -381,15 +381,15 @@ final class LoadedBoard: @unchecked Sendable {
             let iBytes = indexCount * MemoryLayout<UInt32>.stride
 
             if vBytes > device.maxBufferLength || iBytes > device.maxBufferLength {
-                throw NetloomError.message("Kart bu cihazın grafik belleği için çok büyük "
-                    + "(\(vBytes / 1_048_576) MB köşe, \(iBytes / 1_048_576) MB indeks).")
+                throw NetloomError.message(String(localized:
+                    "The board is too large for this device's graphics memory (\(vBytes / 1_048_576) MB vertices, \(iBytes / 1_048_576) MB indices)."))
             }
 
             vb = device.makeBuffer(bytes: vptr, length: vBytes, options: .storageModeShared)
             ib = device.makeBuffer(bytes: iptr, length: iBytes, options: .storageModeShared)
 
             if vb == nil || ib == nil {
-                throw NetloomError.message("Grafik belleği ayrılamadı (kart çok büyük olabilir).")
+                throw NetloomError.message(String(localized: "Could not allocate graphics memory (the board may be too large)."))
             }
         }
 
@@ -404,7 +404,7 @@ final class LoadedBoard: @unchecked Sendable {
 
     static func load(data: Data, name: String) throws -> LoadedBoard {
         guard let device = MetalContext.shared.device else {
-            throw NetloomError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
+            throw NetloomError.message(String(localized: "This device does not support Metal graphics."))
         }
 
         let errorSize = 1024
@@ -423,7 +423,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw NetloomError.message(message.isEmpty ? "Dosya açılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? String(localized: "The file could not be opened.") : message)
         }
 
         do {
@@ -438,7 +438,7 @@ final class LoadedBoard: @unchecked Sendable {
     /// Builds a board from the current state of an editable document (background task).
     static func load(document: BoardDocument, name: String, fileSize: Int) throws -> LoadedBoard {
         guard let device = MetalContext.shared.device else {
-            throw NetloomError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
+            throw NetloomError.message(String(localized: "This device does not support Metal graphics."))
         }
 
         let errorSize = 1024
@@ -452,7 +452,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw NetloomError.message(message.isEmpty ? "Kart oluşturulamadı." : message)
+            throw NetloomError.message(message.isEmpty ? String(localized: "The board could not be built.") : message)
         }
 
         do {
@@ -540,6 +540,14 @@ final class LoadedBoard: @unchecked Sendable {
         return (SIMD2(x, y), a)
     }
 
+    func footprintPadCount(_ index: Int) -> Int {
+        Int(kp_board_footprint_pad_count(handle, Int32(index)))
+    }
+
+    func netPadCount(_ net: Int) -> Int {
+        Int(kp_board_net_pad_count(handle, Int32(net)))
+    }
+
     func trackWidth(_ item: PickedItem) -> Double {
         var c = item.cItem
         return kp_board_track_width(handle, &c)
@@ -573,7 +581,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw NetloomError.message(message.isEmpty ? "Düzenleme yapılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? String(localized: "The edit could not be made.") : message)
         }
     }
 

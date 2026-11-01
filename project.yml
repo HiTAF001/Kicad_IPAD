@@ -7,6 +7,7 @@ options:
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
+  developmentLanguage: en
 
 settings:
   base:
@@ -49,6 +50,19 @@ targets:
       path: Support/Info.plist
       properties:
         CFBundleDisplayName: Netloom
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations:
+          - en
+          - tr
+          - de
+          - fr
+          - es
+          - it
+          - fi
+          - ru
+          - ja
+          - ko
+          - zh-Hans
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSRequiresIPhoneOS: true

@@ -7,6 +7,7 @@
  * version 3 of the License, or (at your option) any later version.
  */
 #include "edit.h"
+#include "i18n.h"
 #include "sexpr.h"
 
 #include <algorithm>
@@ -263,7 +264,7 @@ const Footprint* footprintOf( const EditTarget& t, int aFp, std::string& err )
 {
     if( aFp < 0 || aFp >= (int) t.board.footprints.size() )
     {
-        err = "Geçersiz footprint";
+        err = Tr( "Invalid footprint" );
         return nullptr;
     }
 
@@ -284,7 +285,7 @@ bool MoveFootprint( EditTarget& t, int aFp, double dx, double dy, std::string& e
 
     if( di < 0 )
     {
-        err = "Footprint dosyada bulunamadı";
+        err = Tr( "Footprint not found in the file" );
         return false;
     }
 
@@ -292,8 +293,8 @@ bool MoveFootprint( EditTarget& t, int aFp, double dx, double dy, std::string& e
 
     if( isLocked( tree.root ) )
     {
-        err = ( fp->reference.empty() ? std::string( "Footprint" ) : fp->reference )
-              + " kilitli. Kilidi KiCad'de açabilirsin.";
+        err = TrF( "{0} is locked. You can unlock it in KiCad.",
+                   { fp->reference.empty() ? std::string( Tr( "Footprint" ) ) : fp->reference } );
         return false;
     }
 
@@ -317,7 +318,7 @@ bool MoveFootprint( EditTarget& t, int aFp, double dx, double dy, std::string& e
 
     if( patches.empty() )
     {
-        err = "Footprint konumu bulunamadı";
+        err = Tr( "Footprint position not found" );
         return false;
     }
 
@@ -339,7 +340,7 @@ bool MoveFootprint( EditTarget& t, int aFp, double dx, double dy, std::string& e
                         } );
     }
 
-    t.doc.Begin( "Taşı " + fp->reference );
+    t.doc.Begin( TrF( "Move {0}", { fp->reference } ) );
     t.doc.Replace( di, applyPatches( tree.body, patches ) );
     t.doc.Commit();
     return true;
@@ -357,7 +358,7 @@ bool RotateFootprint( EditTarget& t, int aFp, double deg, std::string& err )
 
     if( di < 0 )
     {
-        err = "Footprint dosyada bulunamadı";
+        err = Tr( "Footprint not found in the file" );
         return false;
     }
 
@@ -365,8 +366,8 @@ bool RotateFootprint( EditTarget& t, int aFp, double deg, std::string& err )
 
     if( isLocked( tree.root ) )
     {
-        err = ( fp->reference.empty() ? std::string( "Footprint" ) : fp->reference )
-              + " kilitli. Kilidi KiCad'de açabilirsin.";
+        err = TrF( "{0} is locked. You can unlock it in KiCad.",
+                   { fp->reference.empty() ? std::string( Tr( "Footprint" ) ) : fp->reference } );
         return false;
     }
 
@@ -449,7 +450,7 @@ bool RotateFootprint( EditTarget& t, int aFp, double deg, std::string& err )
                         } );
     }
 
-    t.doc.Begin( "Döndür " + fp->reference );
+    t.doc.Begin( TrF( "Rotate {0}", { fp->reference } ) );
     t.doc.Replace( di, applyPatches( tree.body, patches ) );
     t.doc.Commit();
     return true;
@@ -459,7 +460,7 @@ bool RotateFootprint( EditTarget& t, int aFp, double deg, std::string& err )
 bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
 {
     int         parseIndex = -1;
-    std::string label = "Sil";
+    std::string label = Tr( "Delete" );
 
     switch( type )
     {
@@ -467,7 +468,7 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
         if( idx >= 0 && idx < (int) t.board.footprints.size() )
         {
             parseIndex = t.board.footprints[(size_t) idx].docItem;
-            label = "Sil " + t.board.footprints[(size_t) idx].reference;
+            label = TrF( "Delete {0}", { t.board.footprints[(size_t) idx].reference } );
         }
 
         break;
@@ -476,21 +477,21 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
         if( idx >= 0 && idx < (int) t.board.tracks.size() )
             parseIndex = t.board.tracks[(size_t) idx].docItem;
 
-        label = "Pisti sil";
+        label = Tr( "Delete track" );
         break;
 
     case ItemType::ARC:
         if( idx >= 0 && idx < (int) t.board.arcs.size() )
             parseIndex = t.board.arcs[(size_t) idx].docItem;
 
-        label = "Yay pisti sil";
+        label = Tr( "Delete arc track" );
         break;
 
     case ItemType::VIA:
         if( idx >= 0 && idx < (int) t.board.vias.size() )
             parseIndex = t.board.vias[(size_t) idx].docItem;
 
-        label = "Via'yı sil";
+        label = Tr( "Delete via" );
         break;
 
     case ItemType::ZONE:
@@ -498,14 +499,14 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
         {
             if( t.board.zones[(size_t) idx].footprint >= 0 )
             {
-                err = "Footprint'e ait bölge tek başına silinemez";
+                err = Tr( "A footprint's zone cannot be deleted on its own" );
                 return false;
             }
 
             parseIndex = t.board.zones[(size_t) idx].docItem;
         }
 
-        label = "Bölgeyi sil";
+        label = Tr( "Delete zone" );
         break;
 
     case ItemType::SHAPE:
@@ -513,14 +514,14 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
         {
             if( t.board.shapes[(size_t) idx].footprint >= 0 )
             {
-                err = "Footprint'e ait çizim tek başına silinemez";
+                err = Tr( "A footprint's graphic cannot be deleted on its own" );
                 return false;
             }
 
             parseIndex = t.board.shapes[(size_t) idx].docItem;
         }
 
-        label = "Çizimi sil";
+        label = Tr( "Delete graphic" );
         break;
 
     case ItemType::TEXT:
@@ -528,22 +529,22 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
         {
             if( t.board.texts[(size_t) idx].footprint >= 0 )
             {
-                err = "Footprint yazısı tek başına silinemez; footprint'i seçip alanı düzenleyebilirsin";
+                err = Tr( "Footprint text cannot be deleted on its own; select the footprint to edit its fields" );
                 return false;
             }
 
             parseIndex = t.board.texts[(size_t) idx].docItem;
         }
 
-        label = "Yazıyı sil";
+        label = Tr( "Delete text" );
         break;
 
     case ItemType::PAD:
-        err = "Pad tek başına silinemez; footprint'i silebilirsin";
+        err = Tr( "A pad cannot be deleted on its own; delete the footprint instead" );
         return false;
 
     default:
-        err = "Bu öğe silinemez";
+        err = Tr( "This item cannot be deleted" );
         return false;
     }
 
@@ -551,7 +552,7 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
 
     if( di < 0 )
     {
-        err = "Öğe dosyada bulunamadı";
+        err = Tr( "Item not found in the file" );
         return false;
     }
 
@@ -559,7 +560,7 @@ bool DeleteItem( EditTarget& t, ItemType type, int idx, std::string& err )
 
     if( isLocked( tree.root ) )
     {
-        err = "Öğe kilitli. Kilidi KiCad'de açabilirsin.";
+        err = Tr( "The item is locked. You can unlock it in KiCad." );
         return false;
     }
 
@@ -582,7 +583,7 @@ bool SetFootprintFields( EditTarget& t, int aFp, const std::vector<std::pair<std
 
     if( di < 0 )
     {
-        err = "Footprint dosyada bulunamadı";
+        err = Tr( "Footprint not found in the file" );
         return false;
     }
 
@@ -621,16 +622,16 @@ bool SetFootprintFields( EditTarget& t, int aFp, const std::vector<std::pair<std
 
         if( patches.size() == before )
         {
-            err = "Footprint'te \"" + field + "\" alanı yok";
+            err = TrF( "The footprint has no \"{0}\" field", { field } );
             return false;
         }
 
-        label += ( label.empty() ? "" : ", " ) + field + " = " + value;
+        label += ( label.empty() ? "" : ", " ) + std::string( Tr( field.c_str() ) ) + " = " + value;
     }
 
     if( patches.empty() )
     {
-        err = "Değişiklik yok";
+        err = Tr( "No change" );
         return false;
     }
 
@@ -652,7 +653,7 @@ bool SetTrackWidth( EditTarget& t, ItemType type, int idx, double width, std::st
 {
     if( width <= 0 || width > 100 )
     {
-        err = "Geçersiz genişlik";
+        err = Tr( "Invalid width" );
         return false;
     }
 
@@ -667,7 +668,7 @@ bool SetTrackWidth( EditTarget& t, ItemType type, int idx, double width, std::st
 
     if( di < 0 )
     {
-        err = "Pist dosyada bulunamadı";
+        err = Tr( "Track not found in the file" );
         return false;
     }
 
@@ -675,7 +676,7 @@ bool SetTrackWidth( EditTarget& t, ItemType type, int idx, double width, std::st
 
     if( isLocked( tree.root ) )
     {
-        err = "Pist kilitli";
+        err = Tr( "The track is locked" );
         return false;
     }
 
@@ -683,11 +684,11 @@ bool SetTrackWidth( EditTarget& t, ItemType type, int idx, double width, std::st
 
     if( !w )
     {
-        err = "Pist genişliği bulunamadı";
+        err = Tr( "Track width not found" );
         return false;
     }
 
-    t.doc.Begin( "Pist genişliği " + FormatNumber( width ) + " mm" );
+    t.doc.Begin( TrF( "Track width {0} mm", { FormatNumber( width ) } ) );
     t.doc.Replace( di, applyPatches( tree.body, { { w.begin(), w.end(), "(width " + FormatNumber( width ) + ")" } } ) );
     t.doc.Commit();
     return true;
@@ -698,13 +699,13 @@ bool SetViaSize( EditTarget& t, int aVia, double size, double drill, std::string
 {
     if( aVia < 0 || aVia >= (int) t.board.vias.size() )
     {
-        err = "Geçersiz via";
+        err = Tr( "Invalid via" );
         return false;
     }
 
     if( size <= 0 || drill <= 0 || drill >= size )
     {
-        err = "Delik çapı via çapından küçük olmalı";
+        err = Tr( "The hole must be smaller than the via diameter" );
         return false;
     }
 
@@ -712,7 +713,7 @@ bool SetViaSize( EditTarget& t, int aVia, double size, double drill, std::string
 
     if( di < 0 )
     {
-        err = "Via dosyada bulunamadı";
+        err = Tr( "Via not found in the file" );
         return false;
     }
 
@@ -720,7 +721,7 @@ bool SetViaSize( EditTarget& t, int aVia, double size, double drill, std::string
 
     if( isLocked( tree.root ) )
     {
-        err = "Via kilitli";
+        err = Tr( "The via is locked" );
         return false;
     }
 
@@ -740,11 +741,11 @@ bool SetViaSize( EditTarget& t, int aVia, double size, double drill, std::string
 
     if( patches.empty() )
     {
-        err = "Via boyutu bulunamadı";
+        err = Tr( "Via size not found" );
         return false;
     }
 
-    t.doc.Begin( "Via " + FormatNumber( size ) + "/" + FormatNumber( drill ) + " mm" );
+    t.doc.Begin( TrF( "Via {0}/{1} mm", { FormatNumber( size ), FormatNumber( drill ) } ) );
     t.doc.Replace( di, applyPatches( tree.body, patches ) );
     t.doc.Commit();
     return true;
