@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -8,8 +8,8 @@
  *
  * Picking (what is under the finger), item descriptions and highlight ranges.
  */
-#ifndef KIPAD_PICK_H
-#define KIPAD_PICK_H
+#ifndef NETLOOM_PICK_H
+#define NETLOOM_PICK_H
 
 #include "board.h"
 #include "mesh.h"

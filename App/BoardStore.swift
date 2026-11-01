@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 
 import Foundation
 import SwiftUI
@@ -131,7 +131,7 @@ final class BoardStore: ObservableObject {
     @Published private(set) var isRebuilding = false
     @Published private(set) var dragPreview: SIMD2<Double>?
     @Published var gridStep: Double = 1.27 {
-        didSet { UserDefaults.standard.set(gridStep, forKey: "KiPadGridStep") }
+        didSet { UserDefaults.standard.set(gridStep, forKey: "NetloomGridStep") }
     }
     @Published var activeSheet: EditSheet?
     @Published private(set) var toast: Toast?
@@ -158,9 +158,9 @@ final class BoardStore: ObservableObject {
     private var pendingActions: [String] = []
 
     init() {
-        let saved = UserDefaults.standard.double(forKey: "KiPadGridStep")
+        let saved = UserDefaults.standard.double(forKey: "NetloomGridStep")
 
-        if UserDefaults.standard.object(forKey: "KiPadGridStep") != nil, saved >= 0 {
+        if UserDefaults.standard.object(forKey: "NetloomGridStep") != nil, saved >= 0 {
             gridStep = saved
         }
     }
@@ -192,20 +192,20 @@ final class BoardStore: ObservableObject {
 
     // MARK: - Launch arguments (CI screenshots)
 
-    /// -KiPadOpenSample <id>  -KiPadFlip YES  -KiPadPanel info|layers|search
-    /// -KiPadDemo select|net|measure|labels|edit
+    /// -NetloomOpenSample <id>  -NetloomFlip YES  -NetloomPanel info|layers|search
+    /// -NetloomDemo select|net|measure|labels|edit
     func handleLaunchArguments() {
         guard !launchHandled else { return }
 
         launchHandled = true
         let defaults = UserDefaults.standard
 
-        if let id = defaults.string(forKey: "KiPadOpenSample"),
+        if let id = defaults.string(forKey: "NetloomOpenSample"),
            let sample = samples.first(where: { $0.id == id }) {
-            pendingFlip = defaults.bool(forKey: "KiPadFlip")
-            pendingPanel = defaults.string(forKey: "KiPadPanel")
+            pendingFlip = defaults.bool(forKey: "NetloomFlip")
+            pendingPanel = defaults.string(forKey: "NetloomPanel")
 
-            if let demo = defaults.string(forKey: "KiPadDemo") {
+            if let demo = defaults.string(forKey: "NetloomDemo") {
                 pendingActions.append(demo)
             }
 
@@ -959,7 +959,7 @@ enum FileReader {
         }
 
         var coordinationError: NSError?
-        var result: Result<Data, Error> = .failure(KiPadError.message("Dosya okunamadı."))
+        var result: Result<Data, Error> = .failure(NetloomError.message("Dosya okunamadı."))
 
         NSFileCoordinator().coordinate(readingItemAt: url, options: [.withoutChanges],
                                        error: &coordinationError) { readURL in

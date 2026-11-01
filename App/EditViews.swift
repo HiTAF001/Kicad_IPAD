@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 //
 // Edit mode: the tool bar, the small editing sheets and the toast messages.
 

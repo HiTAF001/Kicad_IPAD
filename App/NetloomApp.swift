@@ -1,10 +1,10 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 
 import SwiftUI
 
 @main
-struct KiPadApp: App {
+struct NetloomApp: App {
     @StateObject private var store = BoardStore()
 
     var body: some Scene {

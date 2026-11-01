@@ -1,9 +1,9 @@
 # XcodeGen project definition. Generate the Xcode project with:
 #   brew install xcodegen && xcodegen generate
 # (CI does this automatically, see .github/workflows/build.yml)
-name: KiPad
+name: Netloom
 options:
-  bundleIdPrefix: com.hitaf001
+  bundleIdPrefix: com.seyhanlabs
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
@@ -20,7 +20,7 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
-  KiPad:
+  Netloom:
     type: application
     platform: iOS
     sources:
@@ -31,10 +31,10 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_NAME: KiPad
-        PRODUCT_BUNDLE_IDENTIFIER: com.hitaf001.kipad
+        PRODUCT_NAME: Netloom
+        PRODUCT_BUNDLE_IDENTIFIER: com.seyhanlabs.netloom
         TARGETED_DEVICE_FAMILY: "1,2"
-        SWIFT_OBJC_BRIDGING_HEADER: Support/KiPad-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: Support/Netloom-Bridging-Header.h
         HEADER_SEARCH_PATHS: "$(SRCROOT)/core/include $(SRCROOT)/core/src"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -48,7 +48,7 @@ targets:
     info:
       path: Support/Info.plist
       properties:
-        CFBundleDisplayName: KiPad
+        CFBundleDisplayName: Netloom
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSRequiresIPhoneOS: true

@@ -68,8 +68,8 @@ jobs:
         run: |
           set +e
           xcodebuild \
-            -project KiPad.xcodeproj \
-            -target KiPad \
+            -project Netloom.xcodeproj \
+            -target Netloom \
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
@@ -99,19 +99,19 @@ jobs:
 
       - name: Package IPA
         run: |
-          APP="build/Release-iphoneos/KiPad.app"
+          APP="build/Release-iphoneos/Netloom.app"
           test -d "$APP"
           mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -qry KiPad.ipa Payload
-          ls -lh KiPad.ipa
+          zip -qry Netloom.ipa Payload
+          ls -lh Netloom.ipa
           /usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$APP/Info.plist"
-          lipo -info "$APP/KiPad"
+          lipo -info "$APP/Netloom"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KiPad-ipa
-          path: KiPad.ipa
+          name: Netloom-ipa
+          path: Netloom.ipa
 
       - name: Publish "latest" pre-release
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -119,10 +119,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest KiPad.ipa \
+          gh release create latest Netloom.ipa \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "KiPad (son derleme)" \
+            --title "Netloom (son derleme)" \
             --notes "İmzasız iPad derlemesi, commit ${GITHUB_SHA::7}. Kurulum için README'ye bak (Sideloadly / AltStore)."
 
   screenshots:
@@ -143,7 +143,7 @@ jobs:
         run: |
           xcodegen generate
           set +e
-          xcodebuild -project KiPad.xcodeproj -target KiPad -configuration Debug \
+          xcodebuild -project Netloom.xcodeproj -target Netloom -configuration Debug \
             -sdk iphonesimulator SYMROOT="$PWD/build-sim" CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1
           status=$?
           if [ $status -ne 0 ]; then
@@ -157,7 +157,7 @@ jobs:
       - name: Run in iPad simulator and take screenshots
         run: |
           set -x
-          APP="build-sim/Debug-iphonesimulator/KiPad.app"
+          APP="build-sim/Debug-iphonesimulator/Netloom.app"
           UDID=$(xcrun simctl list devices available -j | python3 -c '
           import json, sys
           d = json.load(sys.stdin)["devices"]
@@ -170,24 +170,24 @@ jobs:
           mkdir -p shots
           shoot() {
             name=$1; shift
-            xcrun simctl terminate "$UDID" com.hitaf001.kipad 2>/dev/null || true
-            xcrun simctl launch "$UDID" com.hitaf001.kipad "$@"
+            xcrun simctl terminate "$UDID" com.seyhanlabs.netloom 2>/dev/null || true
+            xcrun simctl launch "$UDID" com.seyhanlabs.netloom "$@"
             sleep 12
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
           }
           shoot 1-welcome
-          shoot 2-pic-front -KiPadOpenSample pic_programmer
-          shoot 3-pic-back -KiPadOpenSample pic_programmer -KiPadFlip YES
-          shoot 4-ecc83-layers -KiPadOpenSample ecc83-pp -KiPadPanel layers
-          shoot 5-pic-info -KiPadOpenSample pic_programmer -KiPadPanel info
-          shoot 6-select-footprint -KiPadOpenSample pic_programmer -KiPadDemo select
-          shoot 7-net-highlight -KiPadOpenSample pic_programmer -KiPadDemo net
-          shoot 8-measure -KiPadOpenSample pic_programmer -KiPadDemo measure
-          shoot 9-labels -KiPadOpenSample pic_programmer -KiPadDemo labels
-          shoot 10-search -KiPadOpenSample pic_programmer -KiPadPanel search
-          shoot 11-edit-rotate -KiPadOpenSample pic_programmer -KiPadDemo edit
-          shoot 12-edit-fields -KiPadOpenSample pic_programmer -KiPadDemo edit -KiPadPanel fields
-          xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "KiPad"' --style compact > shots/app-log.txt 2>&1 || true
+          shoot 2-pic-front -NetloomOpenSample pic_programmer
+          shoot 3-pic-back -NetloomOpenSample pic_programmer -NetloomFlip YES
+          shoot 4-ecc83-layers -NetloomOpenSample ecc83-pp -NetloomPanel layers
+          shoot 5-pic-info -NetloomOpenSample pic_programmer -NetloomPanel info
+          shoot 6-select-footprint -NetloomOpenSample pic_programmer -NetloomDemo select
+          shoot 7-net-highlight -NetloomOpenSample pic_programmer -NetloomDemo net
+          shoot 8-measure -NetloomOpenSample pic_programmer -NetloomDemo measure
+          shoot 9-labels -NetloomOpenSample pic_programmer -NetloomDemo labels
+          shoot 10-search -NetloomOpenSample pic_programmer -NetloomPanel search
+          shoot 11-edit-rotate -NetloomOpenSample pic_programmer -NetloomDemo edit
+          shoot 12-edit-fields -NetloomOpenSample pic_programmer -NetloomDemo edit -NetloomPanel fields
+          xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "Netloom"' --style compact > shots/app-log.txt 2>&1 || true
           ls -la shots
 
       - uses: actions/upload-artifact@v4

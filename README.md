@@ -1,6 +1,10 @@
-# KiPad: iPad için KiCad kart görüntüleyici ve düzenleyici
+<img src="App/Assets.xcassets/AppIcon.appiconset/icon-1024.png" width="96" align="right" alt="">
 
-KiPad, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan, yerel (native) bir uygulamadır.
+# Netloom
+
+**iPad için PCB görüntüleme ve düzenleme** · Seyhan Labs
+
+Netloom, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan ve düzenleyen, yerel (native) bir uygulamadır.
 Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşınabilir C++17 ile yazıldı.
 
 > Durum: **Faz 1–4: görüntüleyici, inceleme araçları ve temel düzenleme.** Kartı açar, KiCad
@@ -23,7 +27,8 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 - KiCad 4 – 10 (ve 11 geliştirme sürümü) kart dosyaları: pistler, yay pistler, via'lar
   (kör/gömülü/mikro, padstack), tüm pad şekilleri (daire, dikdörtgen, oval, yamuk, yuvarlak köşeli,
   pahlı, özel/custom), bakır bölgeler, çizimler, yazılar, ölçülendirmeler.
-- Yazılar KiCad'in kendi stroke yazı tipiyle (newstroke), KiCad'in hizalama kurallarıyla çizilir;
+- Yazılar Hershey tabanlı kendi stroke yazı tipimizle, KiCad'in ölçüleri ve hizalama kurallarıyla
+  çizilir (Türkçe ve diğer Latin harfleri, Yunanca, µ, Ω, °, ±, € dahil);
   TrueType yazılar KiCad'in dosyaya yazdığı `render_cache` çokgenlerinden çizilir.
 - KiCad varsayılan renk teması, katman sırası ve yarı saydam maske/pasta görünümü.
 - Büyük kartlar: 85 MB'lık `jetson-agx-thor-baseboard` demosu (15 milyon üçgen) açılıyor.
@@ -54,10 +59,10 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 
 ## iPad'e kurulum (Mac gerekmez)
 
-GitHub Actions her `main` push'unda imzasız bir `KiPad.ipa` üretir:
+GitHub Actions her `main` push'unda imzasız bir `Netloom.ipa` üretir:
 
-- **Releases → "latest"** sayfasında `KiPad.ipa` olarak, ya da
-- **Actions → son çalışma → Artifacts → `KiPad-ipa`** olarak indirilebilir.
+- **Releases → "latest"** sayfasında `Netloom.ipa` olarak, ya da
+- **Actions → son çalışma → Artifacts → `Netloom-ipa`** olarak indirilebilir.
 
 İmzasız IPA'yı kendi Apple ID'nle imzalayıp yüklemek için Windows'ta iki yol var:
 
@@ -65,7 +70,7 @@ GitHub Actions her `main` push'unda imzasız bir `KiPad.ipa` üretir:
 
 1. Apple'ın sitesinden **iTunes** ve **iCloud**'u kur (Microsoft Store sürümleri değil, web sürümleri).
 2. [Sideloadly](https://sideloadly.io)'yi kur, iPad'i USB ile bağla ve "Bu bilgisayara güven" de.
-3. `KiPad.ipa`'yı Sideloadly'ye sürükle, Apple ID'ni yaz, **Start**'a bas.
+3. `Netloom.ipa`'yı Sideloadly'ye sürükle, Apple ID'ni yaz, **Start**'a bas.
 4. iPad'de: **Ayarlar → Gizlilik ve Güvenlik → Geliştirici Modu**'nu aç (iPadOS 16+), cihaz
    yeniden başlar. Sonra **Ayarlar → Genel → VPN ve Cihaz Yönetimi**'nden Apple ID'ne güven.
 
@@ -99,7 +104,7 @@ pist genişliği veya via, ızgara ve kaydet düğmeleri var.
 > uygulama paketinin içinde olduğu için yalnız "Farklı kaydet" ile saklanabilir.
 
 Dosyayı **Aç** düğmesiyle (Dosyalar, iCloud Drive, OneDrive, AirDrop ile gelenler) seçebilir ya da
-Dosyalar uygulamasında bir `.kicad_pcb` dosyasını paylaş menüsünden KiPad'e gönderebilirsin.
+Dosyalar uygulamasında bir `.kicad_pcb` dosyasını paylaş menüsünden Netloom'a gönderebilirsin.
 
 ## Mimari
 
@@ -150,7 +155,7 @@ Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
 
 - **Ratsnest:** KiCad 7'nin okuyabildiği 71 kartta eksik bağlantı sayısı KiCad'in
   `GetUnconnectedCount()` sonucuyla birebir aynı.
-- **Düzenleme:** 40 kartta rastgele taşıma/döndürme/alan değişikliği yapıldı; KiPad'in kaydettiği
+- **Düzenleme:** 40 kartta rastgele taşıma/döndürme/alan değişikliği yapıldı; Netloom'un kaydettiği
   dosya, aynı işlemlerin KiCad API'siyle yapılmış haliyle karşılaştırıldı (footprint konumu ve açısı,
   her pad'in konumu ve açısı, referans/değer yazılarının konumu ve açısı): 0 fark.
 - Tüm düzenlemeler geri alınınca dosya orijinaliyle bayt bayt aynı (ctest).
@@ -160,7 +165,7 @@ Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
 ```sh
 brew install xcodegen
 xcodegen generate
-open KiPad.xcodeproj
+open Netloom.xcodeproj
 ```
 
 ## Yol haritası
@@ -174,12 +179,16 @@ open KiPad.xcodeproj
 
 ## Lisans
 
-KiPad **GPL-3.0-or-later** ile lisanslıdır (bkz. `LICENSE`). İçerdiği üçüncü parti parçalar:
+Netloom © 2026 Seyhan Labs. Bu depodaki kaynak kod **GPL-3.0-or-later** ile yayınlanır
+(bkz. `LICENSE`). Telif hakkının tamamı Seyhan Labs'e ait olduğu için uygulama ayrıca başka
+koşullarla da dağıtılabilir (ör. App Store); ayrıntılar `COPYRIGHT.md` dosyasında. Katkılar
+yalnız katkı sözleşmesiyle (CLA) kabul edilir, bkz. `CONTRIBUTING.md`.
 
-- `core/src/newstroke_font.cpp`: KiCad'in stroke yazı tipi verisi (GPL-2.0-or-later;
-  CJK glifleri Source Han Sans'tan, SIL OFL 1.1)
+Üçüncü parti parçalar (`THIRD_PARTY_NOTICES.md`):
+
+- Hershey yazı tipi verisi (atıfla serbest kullanım, `core/third_party/hershey/NOTICE`)
 - `core/third_party/earcut.hpp`: Mapbox earcut (ISC)
-- `tools/stb_image_write.h`: stb (MIT / kamu malı)
+- `tools/stb_image_write.h`: stb (MIT / kamu malı, yalnız masaüstü test aracı)
 - `samples/*.kicad_pcb`: KiCad demo kartları (CC BY-SA 4.0, KiCad geliştiricileri)
 
-KiPad, KiCad projesiyle bağlantılı değildir. "KiCad" adı KiCad projesine aittir.
+Netloom, KiCad projesiyle bağlantılı değildir. "KiCad", LF Projects, LLC'nin tescilli markasıdır.

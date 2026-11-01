@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 //
 // Metal renderer and touch handling for the board canvas.
 //
@@ -149,7 +149,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         do {
             let library = try device.makeLibrary(source: shaderSource, options: nil)
             let desc = MTLRenderPipelineDescriptor()
-            desc.label = "KiPad board"
+            desc.label = "Netloom board"
             desc.vertexFunction = library.makeFunction(name: "kp_vertex")
             desc.fragmentFunction = library.makeFunction(name: "kp_fragment")
             desc.rasterSampleCount = view.sampleCount
@@ -167,7 +167,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
             pipeline = try device.makeRenderPipelineState(descriptor: desc)
         } catch {
-            NSLog("KiPad: pipeline error: \(error)")
+            NSLog("Netloom: pipeline error: \(error)")
         }
 
         func makeState(compare: MTLCompareFunction, pass: MTLStencilOperation) -> MTLDepthStencilState? {

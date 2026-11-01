@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -10,8 +10,8 @@
  * down (same as KiCad). Angles are degrees, KiCad convention (positive = counter-clockwise on
  * screen).
  */
-#ifndef KIPAD_BOARD_H
-#define KIPAD_BOARD_H
+#ifndef NETLOOM_BOARD_H
+#define NETLOOM_BOARD_H
 
 #include <array>
 #include <cstdint>

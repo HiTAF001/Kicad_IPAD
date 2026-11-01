@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -9,8 +9,8 @@
  * Copper connectivity: which pads, vias, tracks and zone fills of a net touch each other, and
  * the "airwires" (ratsnest) still needed to connect the separate islands of each net.
  */
-#ifndef KIPAD_CONNECTIVITY_H
-#define KIPAD_CONNECTIVITY_H
+#ifndef NETLOOM_CONNECTIVITY_H
+#define NETLOOM_CONNECTIVITY_H
 
 #include "board.h"
 

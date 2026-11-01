@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 //
 // Swift wrapper around the C core: loads a board, copies its mesh into Metal buffers and keeps
 // the metadata the UI needs. Picking, descriptions and highlight ranges are forwarded to the
@@ -9,7 +9,7 @@ import Foundation
 import Metal
 import simd
 
-enum KiPadError: LocalizedError {
+enum NetloomError: LocalizedError {
     case message(String)
 
     var errorDescription: String? {
@@ -381,7 +381,7 @@ final class LoadedBoard: @unchecked Sendable {
             let iBytes = indexCount * MemoryLayout<UInt32>.stride
 
             if vBytes > device.maxBufferLength || iBytes > device.maxBufferLength {
-                throw KiPadError.message("Kart bu cihazın grafik belleği için çok büyük "
+                throw NetloomError.message("Kart bu cihazın grafik belleği için çok büyük "
                     + "(\(vBytes / 1_048_576) MB köşe, \(iBytes / 1_048_576) MB indeks).")
             }
 
@@ -389,7 +389,7 @@ final class LoadedBoard: @unchecked Sendable {
             ib = device.makeBuffer(bytes: iptr, length: iBytes, options: .storageModeShared)
 
             if vb == nil || ib == nil {
-                throw KiPadError.message("Grafik belleği ayrılamadı (kart çok büyük olabilir).")
+                throw NetloomError.message("Grafik belleği ayrılamadı (kart çok büyük olabilir).")
             }
         }
 
@@ -404,7 +404,7 @@ final class LoadedBoard: @unchecked Sendable {
 
     static func load(data: Data, name: String) throws -> LoadedBoard {
         guard let device = MetalContext.shared.device else {
-            throw KiPadError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
+            throw NetloomError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
         }
 
         let errorSize = 1024
@@ -423,7 +423,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw KiPadError.message(message.isEmpty ? "Dosya açılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? "Dosya açılamadı." : message)
         }
 
         do {
@@ -438,7 +438,7 @@ final class LoadedBoard: @unchecked Sendable {
     /// Builds a board from the current state of an editable document (background task).
     static func load(document: BoardDocument, name: String, fileSize: Int) throws -> LoadedBoard {
         guard let device = MetalContext.shared.device else {
-            throw KiPadError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
+            throw NetloomError.message("Bu cihaz Metal grafik arayüzünü desteklemiyor.")
         }
 
         let errorSize = 1024
@@ -452,7 +452,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw KiPadError.message(message.isEmpty ? "Kart oluşturulamadı." : message)
+            throw NetloomError.message(message.isEmpty ? "Kart oluşturulamadı." : message)
         }
 
         do {
@@ -573,7 +573,7 @@ final class LoadedBoard: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw KiPadError.message(message.isEmpty ? "Düzenleme yapılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? "Düzenleme yapılamadı." : message)
         }
     }
 

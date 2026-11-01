@@ -1,14 +1,15 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
  * version 3 of the License, or (at your option) any later version.
  */
 #include "stroke_font.h"
-#include "newstroke_font.h"
+#include "stroke_glyphs.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace kp
@@ -111,20 +112,31 @@ const StrokeFont& StrokeFont::Get()
 
 const StrokeGlyph& StrokeFont::glyph( uint32_t aCodePoint ) const
 {
-    int idx = (int) aCodePoint - 32;
+    auto find = []( uint32_t cp ) -> const char*
+    {
+        const StrokeGlyphData* end = g_strokeGlyphs + g_strokeGlyphCount;
+        const StrokeGlyphData* it = std::lower_bound( g_strokeGlyphs, end, cp,
+                                                      []( const StrokeGlyphData& d, uint32_t v )
+                                                      { return d.codePoint < v; } );
+        return it != end && it->codePoint == cp ? it->data : nullptr;
+    };
 
-    if( idx < 0 || idx >= newstroke_font_bufsize )
-        idx = '?' - 32;
+    const char* s = find( aCodePoint );
+    uint32_t    key = aCodePoint;
+
+    if( !s )
+    {
+        s = find( '?' ); // characters the font does not have
+        key = '?';
+    }
 
     std::lock_guard<std::mutex> lock( m_mutex );
-
-    auto it = m_cache.find( (uint32_t) idx );
+    auto it = m_cache.find( key );
 
     if( it != m_cache.end() )
         return *it->second;
 
-    auto        g = std::make_unique<StrokeGlyph>();
-    const char* s = newstroke_font[idx];
+    auto g = std::make_unique<StrokeGlyph>();
 
     if( s && s[0] && s[1] )
     {
@@ -157,7 +169,7 @@ const StrokeGlyph& StrokeFont::glyph( uint32_t aCodePoint ) const
     }
 
     const StrokeGlyph& ref = *g;
-    m_cache.emplace( (uint32_t) idx, std::move( g ) );
+    m_cache.emplace( key, std::move( g ) );
     return ref;
 }
 

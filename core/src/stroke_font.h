@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -9,8 +9,8 @@
  * KiCad stroke font: glyph decoding and text layout following KiCad's KIFONT::STROKE_FONT /
  * KIFONT::FONT behaviour, so text lands where KiCad draws it.
  */
-#ifndef KIPAD_STROKE_FONT_H
-#define KIPAD_STROKE_FONT_H
+#ifndef NETLOOM_STROKE_FONT_H
+#define NETLOOM_STROKE_FONT_H
 
 #include "board.h"
 

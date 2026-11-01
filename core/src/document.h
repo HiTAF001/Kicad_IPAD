@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -10,12 +10,12 @@
  *
  * The file is split into its top-level items (footprints, segments, vias, zones, ...). Edits
  * replace, remove or append whole items; everything else is written back byte for byte, so
- * data KiPad does not understand (stackup, net classes, 3D models, groups, ...) survives and
+ * data Netloom does not understand (stackup, net classes, 3D models, groups, ...) survives and
  * diffs stay small. Item indices never change (removed items become tombstones), which keeps
  * undo/redo simple.
  */
-#ifndef KIPAD_DOCUMENT_H
-#define KIPAD_DOCUMENT_H
+#ifndef NETLOOM_DOCUMENT_H
+#define NETLOOM_DOCUMENT_H
 
 #include <cstdint>
 #include <string>

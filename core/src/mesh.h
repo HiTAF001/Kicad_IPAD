@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -10,8 +10,8 @@
  * uploaded to the GPU. Within one slot, every pixel must be painted at most once (the renderer
  * uses a per-slot stencil reference) so translucent layers look like KiCad's.
  */
-#ifndef KIPAD_MESH_H
-#define KIPAD_MESH_H
+#ifndef NETLOOM_MESH_H
+#define NETLOOM_MESH_H
 
 #include "board.h"
 

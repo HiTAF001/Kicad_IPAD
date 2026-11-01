@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 //
 // The editable file behind a board (kp_doc in the core). It keeps the original text and writes
 // unedited items back byte for byte, with undo/redo.
@@ -48,7 +48,7 @@ final class BoardDocument: @unchecked Sendable {
                 guard let base = ptr.baseAddress else { return "" }
                 return String(cString: base)
             }
-            throw KiPadError.message(message.isEmpty ? "Dosya açılamadı." : message)
+            throw NetloomError.message(message.isEmpty ? "Dosya açılamadı." : message)
         }
 
         return BoardDocument(handle: handle)
@@ -124,7 +124,7 @@ enum FileWriter {
         }
 
         var coordinationError: NSError?
-        var result: Result<Void, Error> = .failure(KiPadError.message("Dosya yazılamadı."))
+        var result: Result<Void, Error> = .failure(NetloomError.message("Dosya yazılamadı."))
 
         NSFileCoordinator().coordinate(writingItemAt: url, options: [.forReplacing],
                                        error: &coordinationError) { writeURL in

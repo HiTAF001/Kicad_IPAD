@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -11,8 +11,8 @@
  * The reader works on an in-memory buffer and builds one top-level element at a time into a
  * reusable node pool, so very large boards (tens of MB) can be read with bounded memory.
  */
-#ifndef KIPAD_SEXPR_H
-#define KIPAD_SEXPR_H
+#ifndef NETLOOM_SEXPR_H
+#define NETLOOM_SEXPR_H
 
 #include <cstdint>
 #include <deque>

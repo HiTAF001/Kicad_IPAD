@@ -1,6 +1,6 @@
 /*
- * KiPad - KiCad board viewer for iPad
- * Copyright (C) 2026 KiPad contributors
+ * Netloom - PCB design for iPad
+ * Copyright (C) 2026 Seyhan Labs
  *
  * This program is free software: you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by the Free Software Foundation, either
@@ -611,7 +611,7 @@ void BoardParser::Parse( const char* aData, size_t aLen )
             throw ParseError( "Bu bir footprint dosyası (.kicad_mod), kart dosyası değil", 0 );
 
         if( root == "kicad_sch" || root == "kicad_symbol_lib" )
-            throw ParseError( "Bu bir şema/sembol dosyası. KiPad şimdilik yalnızca kart "
+            throw ParseError( "Bu bir şema/sembol dosyası. Netloom şimdilik yalnızca kart "
                               "(.kicad_pcb) dosyalarını açıyor.", 0 );
 
         throw ParseError( "Bu bir KiCad kart dosyası değil (kök: '" + std::string( root ) + "')", 0 );

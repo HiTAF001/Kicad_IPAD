@@ -1,5 +1,5 @@
-// KiPad - KiCad board viewer for iPad
-// Copyright (C) 2026 KiPad contributors. Licensed under the GNU GPL v3 or later.
+// Netloom - PCB design for iPad
+// Copyright (C) 2026 Seyhan Labs. Licensed under the GNU GPL v3 or later.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -167,7 +167,7 @@ struct ContentView: View {
     }
 
     private var title: String {
-        guard let board = store.board else { return "KiPad" }
+        guard let board = store.board else { return "Netloom" }
         return store.docState.modified ? "\(board.name) •" : board.name
     }
 
@@ -311,7 +311,7 @@ struct WelcomeView: View {
                     .foregroundStyle(Color(red: 200 / 255, green: 52 / 255, blue: 52 / 255))
 
                 VStack(spacing: 6) {
-                    Text("KiPad")
+                    Text("Netloom")
                         .font(.largeTitle.bold())
                     Text("KiCad kart görüntüleyici ve düzenleyici")
                         .font(.title3)
@@ -405,7 +405,7 @@ struct HelpView: View {
                 }
 
                 Section("Hakkında") {
-                    Text("KiPad, KiCad'in .kicad_pcb dosyalarını okuyan ve düzenleyen bağımsız bir uygulamadır. "
+                    Text("Netloom, KiCad'in .kicad_pcb dosyalarını okuyan ve düzenleyen bağımsız bir uygulamadır. "
                          + "KiCad'in stroke yazı tipini ve renk temasını kullanır. GPL-3.0 lisanslıdır.")
                     Text("Çekirdek sürümü \(String(cString: kp_core_version()))")
                         .foregroundStyle(.secondary)
