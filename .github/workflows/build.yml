@@ -197,6 +197,10 @@ jobs:
           shoot 13-japanese -NetloomOpenSample pic_programmer -NetloomDemo select -AppleLanguages "(ja)" -AppleLocale ja_JP
           shoot 14-german-edit -NetloomOpenSample pic_programmer -NetloomDemo edit -AppleLanguages "(de)" -AppleLocale de_DE
           shoot 15-turkish-help -NetloomOpenSample pic_programmer -NetloomPanel help -AppleLanguages "(tr)" -AppleLocale tr_TR
+          shoot 16-route -NetloomOpenSample pic_programmer -NetloomDemo route
+          shoot 17-drc -NetloomOpenSample pic_programmer -NetloomDemo drc
+          shoot 18-fab -NetloomOpenSample pic_programmer -NetloomDemo fab
+          shoot 19-turkish-drc -NetloomOpenSample pic_programmer -NetloomDemo drc -AppleLanguages "(tr)" -AppleLocale tr_TR
           xcrun simctl spawn "$UDID" log show --last 5m --predicate 'process == "Netloom"' --style compact > shots/app-log.txt 2>&1 || true
           ls -la shots
 

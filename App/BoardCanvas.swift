@@ -22,6 +22,16 @@ struct BoardCanvas: UIViewRepresentable {
     let onDragBegin: @MainActor (SIMD2<Double>, Double) -> Bool
     let onDragSnap: @MainActor (SIMD2<Double>) -> SIMD2<Double>
     let onDragEnd: @MainActor (SIMD2<Double>) -> Void
+    /// Pencil track drawing (nil = off).
+    var route: RouteToolConfig? = nil
+    var routeBuilder: (@MainActor ([SIMD2<Double>], Double, Double) -> RoutePreview?)? = nil
+    var onRouteFinished: (@MainActor (RoutePreview?) -> Void)? = nil
+    var onPencil: (@MainActor () -> Void)? = nil
+    /// Design rule check markers and the one in focus.
+    var drcMarkers: [DRCMarker] = []
+    var drcFocus: SIMD2<Double>? = nil
+    /// A scripted stroke (CI screenshots).
+    var demoStroke: [SIMD2<Double>]? = nil
 
     func makeCoordinator() -> BoardRenderer {
         BoardRenderer()
@@ -39,6 +49,9 @@ struct BoardCanvas: UIViewRepresentable {
         renderer.onDragBegin = onDragBegin
         renderer.onDragSnap = onDragSnap
         renderer.onDragEnd = onDragEnd
+        renderer.routeBuilder = routeBuilder
+        renderer.onRouteFinished = onRouteFinished
+        renderer.onPencil = onPencil
         renderer.update(board: board,
                         visibleSlots: visibleSlots,
                         hiddenKinds: hiddenKinds,
@@ -48,6 +61,10 @@ struct BoardCanvas: UIViewRepresentable {
                         measureA: measureA,
                         measureB: measureB,
                         focus: focus,
-                        dragPreview: dragPreview)
+                        dragPreview: dragPreview,
+                        route: route,
+                        drcMarkers: drcMarkers,
+                        drcFocus: drcFocus,
+                        demoStroke: demoStroke)
     }
 }

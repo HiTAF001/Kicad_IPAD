@@ -634,3 +634,272 @@ final class LoadedBoard: @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Pencil routing
+
+/// Owns a core route (kp_route) and frees it.
+final class RouteHandle {
+    let pointer: OpaquePointer
+
+    init(_ pointer: OpaquePointer) {
+        self.pointer = pointer
+    }
+
+    deinit {
+        kp_route_free(pointer)
+    }
+}
+
+/// Where and how tracks are drawn with the pencil.
+struct RouteSettings: Equatable {
+    var slot: Int
+    var width: Double
+    var viaSize: Double
+    var viaDrill: Double
+}
+
+/// A clean track built from a pencil stroke, ready to show and to commit.
+struct RoutePreview {
+    let handle: RouteHandle
+    let ok: Bool
+    let blocked: Bool
+    let shorts: Bool
+    let tooClose: Bool
+    let startAnchored: Bool
+    let endAnchored: Bool
+    let net: Int
+    let length: Double
+    let message: String
+    /// x1, y1, x2, y2 per track (mm)
+    let tracks: [SIMD4<Float>]
+    /// x, y, diameter per via
+    let vias: [SIMD3<Float>]
+    /// x, y, 1 = short / 0 = too close
+    let conflicts: [SIMD3<Float>]
+    let anchors: [SIMD2<Float>]
+    let width: Double
+
+    var canCommit: Bool { ok && !blocked && !tracks.isEmpty }
+}
+
+// MARK: - Design rule check
+
+struct DRCEntry: Identifiable {
+    let id: Int
+    let code: Int
+    let key: String
+    let title: String
+    let isError: Bool
+    let position: SIMD2<Double>
+    let message: String
+    let itemA: PickedItem?
+    let itemB: PickedItem?
+}
+
+struct DRCReport {
+    let entries: [DRCEntry]
+    let errors: Int
+    let warnings: Int
+    /// 0 = KiCad defaults, 1 = board file, 2 = project file
+    let rulesSource: Int
+    let note: String
+    let milliseconds: Double
+}
+
+// MARK: - Fabrication
+
+struct FabFileEntry: Identifiable {
+    let id: Int
+    let name: String
+    let kind: String
+    let size: Int
+}
+
+struct FabPackage {
+    let files: [FabFileEntry]
+    let zip: Data
+    let warnings: [String]
+    let ok: Bool
+}
+
+extension LoadedBoard {
+    /// Copper layer slots, front first.
+    var copperSlots: [LayerSlot] {
+        slots.filter { $0.kind == .copper && $0.parentSlot < 0 && kp_board_slot_layer(handle, Int32($0.id)) >= 0 }
+    }
+
+    private static func floats(_ pointer: UnsafePointer<Float>?, _ count: Int) -> [Float] {
+        guard let pointer, count > 0 else { return [] }
+        return Array(UnsafeBufferPointer(start: pointer, count: count))
+    }
+
+    /// Builds the clean track for a stroke (board millimetres). Main thread only.
+    func buildRoute(points: [SIMD2<Double>], settings: RouteSettings, tolerance: Double, snapRadius: Double,
+                    clearance: Double) -> RoutePreview? {
+        guard points.count >= 2 else { return nil }
+
+        var xy: [Float] = []
+        xy.reserveCapacity(points.count * 2)
+
+        for p in points {
+            xy.append(Float(p.x))
+            xy.append(Float(p.y))
+        }
+
+        let pointer = xy.withUnsafeBufferPointer { buf -> OpaquePointer? in
+            kp_route_build(handle, buf.baseAddress, Int32(points.count), Int32(settings.slot), settings.width,
+                           tolerance, snapRadius, settings.viaSize, settings.viaDrill, clearance)
+        }
+
+        guard let pointer else { return nil }
+
+        let owner = RouteHandle(pointer)
+        var info = kp_route_info()
+        kp_route_get_info(pointer, &info)
+
+        var tc = 0, vc = 0, cc = 0, ac = 0
+        let tp = kp_route_tracks(pointer, &tc)
+        let vp = kp_route_vias(pointer, &vc)
+        let cp = kp_route_conflicts(pointer, &cc)
+        let ap = kp_route_anchors(pointer, &ac)
+        let t = LoadedBoard.floats(tp, tc)
+        let v = LoadedBoard.floats(vp, vc)
+        let c = LoadedBoard.floats(cp, cc)
+        let a = LoadedBoard.floats(ap, ac)
+
+        var tracks: [SIMD4<Float>] = []
+        var vias: [SIMD3<Float>] = []
+        var conflicts: [SIMD3<Float>] = []
+        var anchors: [SIMD2<Float>] = []
+
+        for i in stride(from: 0, to: t.count - 3, by: 4) {
+            tracks.append(SIMD4(t[i], t[i + 1], t[i + 2], t[i + 3]))
+        }
+
+        for i in stride(from: 0, to: v.count - 2, by: 3) {
+            vias.append(SIMD3(v[i], v[i + 1], v[i + 2]))
+        }
+
+        for i in stride(from: 0, to: c.count - 2, by: 3) {
+            conflicts.append(SIMD3(c[i], c[i + 1], c[i + 2]))
+        }
+
+        for i in stride(from: 0, to: a.count - 1, by: 2) {
+            anchors.append(SIMD2(a[i], a[i + 1]))
+        }
+
+        return RoutePreview(handle: owner,
+                            ok: info.ok != 0,
+                            blocked: info.blocked != 0,
+                            shorts: info.shorts != 0,
+                            tooClose: info.too_close != 0,
+                            startAnchored: info.start_kind != 0,
+                            endAnchored: info.end_kind != 0,
+                            net: Int(info.net),
+                            length: info.length,
+                            message: String(cString: kp_route_message(pointer)),
+                            tracks: tracks,
+                            vias: vias,
+                            conflicts: conflicts,
+                            anchors: anchors,
+                            width: settings.width)
+    }
+
+    func commitRoute(_ route: RoutePreview, in document: BoardDocument) throws {
+        try edit(document) { doc, board, err, size in
+            kp_edit_add_route(doc, board, route.handle.pointer, err, size)
+        }
+    }
+
+    /// Runs the design rule check (any thread; the board must stay alive meanwhile).
+    func runDRC(project: Data?) -> DRCReport {
+        let drc: OpaquePointer?
+
+        if let project, !project.isEmpty {
+            drc = project.withUnsafeBytes { raw -> OpaquePointer? in
+                kp_board_drc(handle, raw.baseAddress?.assumingMemoryBound(to: CChar.self), raw.count)
+            }
+        } else {
+            drc = kp_board_drc(handle, nil, 0)
+        }
+
+        guard let drc else {
+            return DRCReport(entries: [], errors: 0, warnings: 0, rulesSource: 0, note: "", milliseconds: 0)
+        }
+
+        defer { kp_drc_free(drc) }
+
+        var entries: [DRCEntry] = []
+        let count = Int(kp_drc_count(drc))
+        entries.reserveCapacity(count)
+
+        for i in 0..<count {
+            var it = kp_drc_item()
+            kp_drc_get(drc, Int32(i), &it)
+            let a = it.a.type != 0 ? PickedItem(it.a) : nil
+            let b = it.b.type != 0 ? PickedItem(it.b) : nil
+            entries.append(DRCEntry(id: i,
+                                    code: Int(it.code),
+                                    key: String(cString: kp_drc_key(it.code)),
+                                    title: String(cString: kp_drc_title(it.code)),
+                                    isError: it.severity == 0,
+                                    position: SIMD2(it.x, it.y),
+                                    message: String(cString: kp_drc_message(drc, Int32(i))),
+                                    itemA: a,
+                                    itemB: b))
+        }
+
+        return DRCReport(entries: entries,
+                         errors: Int(kp_drc_error_count(drc)),
+                         warnings: Int(kp_drc_warning_count(drc)),
+                         rulesSource: Int(kp_drc_rules_source(drc)),
+                         note: String(cString: kp_drc_note(drc)),
+                         milliseconds: kp_drc_ms(drc))
+    }
+
+    /// Gerbers, drill files, BOM and placement, plus a zip of them (any thread).
+    func makeFabrication(baseName: String, useAuxOrigin: Bool) -> FabPackage {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone.current
+        formatter.formatOptions = [.withInternetDateTime]
+        let date = formatter.string(from: Date())
+
+        let fab = baseName.withCString { b in
+            date.withCString { d in
+                kp_board_fab(handle, b, d, useAuxOrigin ? 1 : 0)
+            }
+        }
+
+        guard let fab else {
+            return FabPackage(files: [], zip: Data(), warnings: [], ok: false)
+        }
+
+        defer { kp_fab_free(fab) }
+
+        var files: [FabFileEntry] = []
+
+        for i in 0..<Int(kp_fab_file_count(fab)) {
+            var length = 0
+            _ = kp_fab_file_data(fab, Int32(i), &length)
+            files.append(FabFileEntry(id: i,
+                                      name: String(cString: kp_fab_file_name(fab, Int32(i))),
+                                      kind: String(cString: kp_fab_file_kind(fab, Int32(i))),
+                                      size: length))
+        }
+
+        var warnings: [String] = []
+
+        for i in 0..<Int(kp_fab_warning_count(fab)) {
+            warnings.append(String(cString: kp_fab_warning(fab, Int32(i))))
+        }
+
+        var zipLength = 0
+        var zip = Data()
+
+        if let z = kp_fab_zip(fab, &zipLength), zipLength > 0 {
+            zip = Data(bytes: z, count: zipLength)
+        }
+
+        return FabPackage(files: files, zip: zip, warnings: warnings, ok: kp_fab_ok(fab) != 0)
+    }
+}

@@ -125,6 +125,10 @@ final class BoardStore: ObservableObject {
             if editMode != oldValue {
                 promoteSelectionForEditing()
             }
+
+            if !editMode && drawTool {
+                drawTool = false
+            }
         }
     }
     @Published private(set) var docState = DocumentState()
@@ -138,6 +142,53 @@ final class BoardStore: ObservableObject {
     @Published var pendingAction: PendingAction?
     @Published var showExporter = false
     @Published private(set) var exportFile = KiCadBoardFile(data: Data())
+
+    // pencil track drawing
+    @Published var drawTool = false {
+        didSet {
+            guard drawTool != oldValue else { return }
+
+            if drawTool {
+                if !editMode {
+                    editMode = true
+                }
+
+                selection = nil
+                chooseRouteLayer()
+            }
+
+            routeHint = nil
+            demoStroke = nil
+        }
+    }
+    @Published var routeSettings = RouteSettings(slot: -1, width: 0.25, viaSize: 0.6, viaDrill: 0.3)
+    @Published var fingerDrawing: Bool = (UserDefaults.standard.object(forKey: "NetloomFingerDraw") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(fingerDrawing, forKey: "NetloomFingerDraw") }
+    }
+    @Published private(set) var routeHint: String?
+    @Published private(set) var routeHintIsProblem = false
+    @Published private(set) var demoStroke: [SIMD2<Double>]?
+
+    // design rule check
+    @Published private(set) var drcReport: DRCReport?
+    @Published private(set) var drcRunning = false
+    @Published var showDRC = false
+    @Published private(set) var drcFocusID: Int?
+    @Published private(set) var projectRulesName: String?
+    @Published var showRulesImporter = false
+    private var projectRules: Data?
+    private var drcBoard: ObjectIdentifier?
+
+    // fabrication outputs
+    @Published var showFab = false
+    @Published private(set) var fabPackage: FabPackage?
+    @Published private(set) var fabRunning = false
+    @Published var fabUseAuxOrigin = false {
+        didSet { if fabUseAuxOrigin != oldValue { fabPackage = nil } }
+    }
+    @Published var showFabExporter = false
+    @Published private(set) var fabZipFile = ZipFile(data: Data())
+    private var fabBoard: ObjectIdentifier?
 
     private var document: BoardDocument?
     private var fileURL: URL?
@@ -253,6 +304,36 @@ final class BoardStore: ObservableObject {
             selectFootprint(target)
             rotateSelection(by: 90)
 
+        case "route":
+            // a wobbly stroke from a pad of the busiest footprint, shown with its clean track
+            drawTool = true
+
+            if let pose = board.footprintPose(target) {
+                let start = board.snap(pose.position, tolerance: 6, visible: visibilityBytes()) ?? pose.position
+                var points: [SIMD2<Double>] = []
+
+                for i in 0...60 {
+                    let t = Double(i) / 60
+                    let x = start.x + 14 * t
+                    let y = start.y + (t < 0.5 ? 0 : 9 * (t - 0.5) * 2) + 0.25 * sin(t * 19)
+                    points.append(SIMD2(x, y))
+                }
+
+                demoStroke = points
+
+                var b = BoardBounds(minX: start.x - 6, minY: start.y - 6, maxX: start.x + 20, maxY: start.y + 15)
+                b.minX -= 1
+                focus(on: b, minSize: 20)
+            }
+
+        case "drc":
+            runDRC()
+            showDRC = true
+
+        case "fab":
+            showFab = true
+            makeFabrication()
+
         default:
             break
         }
@@ -333,6 +414,13 @@ final class BoardStore: ObservableObject {
             highlightWholeNet = false
             measureMode = false
             editMode = false
+            routeSettings.slot = -1
+            drcReport = nil
+            drcFocusID = nil
+            showDRC = false
+            fabPackage = nil
+            showFab = false
+            loadSiblingRules(for: url)
             fitToken += 1
 
             if let panel = pendingPanel {
@@ -366,6 +454,10 @@ final class BoardStore: ObservableObject {
         cursorText = nil
         selection = nil
         editMode = false
+        drcReport = nil
+        fabPackage = nil
+        projectRules = nil
+        projectRulesName = nil
     }
 
     /// The user chose to drop the unsaved edits.
@@ -871,7 +963,7 @@ final class BoardStore: ObservableObject {
     // MARK: - Dragging footprints
 
     func dragCanBegin(at point: SIMD2<Double>, tolerance: Double) -> Bool {
-        guard editMode, canEdit, let board, let fp = editFootprint else { return false }
+        guard editMode, !drawTool, canEdit, let board, let fp = editFootprint else { return false }
 
         let hits = board.pick(at: point, tolerance: tolerance, visible: visibilityBytes(),
                               hiddenKinds: hiddenKindMask(), flipped: flipped)
@@ -899,6 +991,226 @@ final class BoardStore: ObservableObject {
 
         if perform(.item(.footprint(Int32(fp))), { board, doc in try board.moveFootprint(fp, by: delta, in: doc) }) {
             dragPreview = delta // keeps the footprint where it was dropped until the rebuild is done
+        }
+    }
+
+    // MARK: - Drawing tracks with the pencil
+
+    /// Copper layer slots of the current board, front first.
+    var copperSlots: [LayerSlot] { board?.copperSlots ?? [] }
+
+    var routeToolConfig: RouteToolConfig? {
+        guard drawTool, let board, routeSettings.slot >= 0, routeSettings.slot < board.slots.count else { return nil }
+
+        return RouteToolConfig(settings: routeSettings, color: board.slots[routeSettings.slot].color,
+                               allowFinger: fingerDrawing)
+    }
+
+    /// Draw on the side being looked at, unless a copper layer is already chosen.
+    private func chooseRouteLayer() {
+        let copper = copperSlots
+
+        guard !copper.isEmpty else { return }
+
+        if !copper.contains(where: { $0.id == routeSettings.slot }) {
+            routeSettings.slot = (flipped ? copper.last : copper.first)?.id ?? -1
+        }
+    }
+
+    func buildRoute(_ points: [SIMD2<Double>], tolerance: Double, snapRadius: Double) -> RoutePreview? {
+        guard drawTool, let board, !isRebuilding, routeSettings.slot >= 0 else { return nil }
+
+        let preview = board.buildRoute(points: points, settings: routeSettings, tolerance: tolerance,
+                                       snapRadius: snapRadius, clearance: 0.2)
+        updateRouteHint(preview)
+        return preview
+    }
+
+    private func updateRouteHint(_ p: RoutePreview?) {
+        var text: String?
+        var problem = false
+
+        if let p {
+            if !p.message.isEmpty {
+                text = p.message
+                problem = p.blocked
+            } else if p.tooClose {
+                text = String(localized: "Closer than 0.2 mm to other copper")
+                problem = true
+            } else if p.ok {
+                let net = p.net > 0 ? board?.nets.first(where: { $0.id == p.net })?.name : nil
+                let length = String(format: "%.2f mm", p.length)
+                text = net.map { String(localized: "\($0) · \(length)") } ?? length
+            }
+        }
+
+        if text != routeHint || problem != routeHintIsProblem {
+            routeHint = text
+            routeHintIsProblem = problem
+        }
+    }
+
+    func finishRoute(_ route: RoutePreview?) {
+        guard let route else {
+            routeHint = nil
+            return
+        }
+
+        guard route.canCommit else {
+            if !route.message.isEmpty {
+                showToast(route.message, isError: route.blocked)
+            }
+
+            return
+        }
+
+        let note = route.message
+
+        if perform(.none, { board, doc in try board.commitRoute(route, in: doc) }), !note.isEmpty {
+            showToast(note)
+        }
+    }
+
+    /// The first Apple Pencil touch switches finger drawing off: fingers move the board.
+    func pencilSeen() {
+        guard !UserDefaults.standard.bool(forKey: "NetloomPencilSeen") else { return }
+
+        UserDefaults.standard.set(true, forKey: "NetloomPencilSeen")
+
+        if fingerDrawing {
+            fingerDrawing = false
+            showToast(String(localized: "Apple Pencil draws; fingers move the board"))
+        }
+    }
+
+    // MARK: - Design rule check
+
+    var drcStale: Bool {
+        guard drcReport != nil, let board else { return false }
+        return drcBoard != ObjectIdentifier(board)
+    }
+
+    var drcMarkers: [DRCMarker] {
+        guard let report = drcReport, !drcStale else { return [] }
+        return report.entries.map { DRCMarker(position: $0.position, isError: $0.isError) }
+    }
+
+    var drcFocusPosition: SIMD2<Double>? {
+        guard let id = drcFocusID, let report = drcReport, !drcStale, id < report.entries.count else { return nil }
+        return report.entries[id].position
+    }
+
+    func runDRC() {
+        guard let board, !drcRunning else { return }
+
+        drcRunning = true
+        drcFocusID = nil
+        let rules = projectRules
+
+        Task.detached(priority: .userInitiated) {
+            let report = board.runDRC(project: rules)
+            await self.finishDRC(report, board: board)
+        }
+    }
+
+    private func finishDRC(_ report: DRCReport, board checked: LoadedBoard) {
+        drcRunning = false
+        drcReport = report
+        drcBoard = ObjectIdentifier(checked)
+    }
+
+    func focusDRC(_ entry: DRCEntry) {
+        drcFocusID = entry.id
+
+        let r = 2.0
+        focus(on: BoardBounds(minX: entry.position.x - r, minY: entry.position.y - r,
+                              maxX: entry.position.x + r, maxY: entry.position.y + r), minSize: 4)
+
+        if let board, let item = entry.itemA {
+            let info = board.describe(item)
+
+            if !info.title.isEmpty || !info.rows.isEmpty {
+                selection = Selection(item: item, info: info,
+                                      netInfo: item.net > 0 ? board.describeNet(item.net) : nil,
+                                      candidates: [entry.itemA, entry.itemB].compactMap { $0 }, candidateIndex: 0,
+                                      tapPoint: nil)
+            }
+        }
+    }
+
+    func clearDRC() {
+        drcReport = nil
+        drcFocusID = nil
+    }
+
+    /// Reads the KiCad project file next to the board, when the system lets us.
+    private func loadSiblingRules(for url: URL?) {
+        projectRules = nil
+        projectRulesName = nil
+
+        guard let url else { return }
+
+        let pro = url.deletingPathExtension().appendingPathExtension("kicad_pro")
+
+        if let data = try? FileReader.read(url: pro), !data.isEmpty {
+            projectRules = data
+            projectRulesName = pro.lastPathComponent
+        }
+    }
+
+    func importRules(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+
+        do {
+            projectRules = try FileReader.read(url: url)
+            projectRulesName = url.lastPathComponent
+            runDRC()
+        } catch {
+            showToast(error.localizedDescription, isError: true)
+        }
+    }
+
+    // MARK: - Fabrication outputs
+
+    var fabStale: Bool {
+        guard fabPackage != nil, let board else { return false }
+        return fabBoard != ObjectIdentifier(board)
+    }
+
+    func makeFabrication() {
+        guard let board, !fabRunning else { return }
+
+        fabRunning = true
+        let name = documentName
+        let aux = fabUseAuxOrigin
+
+        Task.detached(priority: .userInitiated) {
+            let package = board.makeFabrication(baseName: name, useAuxOrigin: aux)
+            await self.finishFabrication(package, board: board)
+        }
+    }
+
+    private func finishFabrication(_ package: FabPackage, board made: LoadedBoard) {
+        fabRunning = false
+        fabPackage = package
+        fabBoard = ObjectIdentifier(made)
+    }
+
+    func exportFabrication() {
+        guard let package = fabPackage, !package.zip.isEmpty else { return }
+
+        fabZipFile = ZipFile(data: package.zip)
+        showFabExporter = true
+    }
+
+    func fabExportFinished(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            showToast(String(localized: "Saved \(url.lastPathComponent)"))
+        case .failure(let error):
+            if (error as NSError).code != NSUserCancelledError {
+                showToast(error.localizedDescription, isError: true)
+            }
         }
     }
 

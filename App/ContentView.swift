@@ -37,7 +37,20 @@ struct ContentView: View {
                                 },
                                 onDragEnd: { raw in
                                     store.dragEnded(raw)
-                                })
+                                },
+                                route: store.routeToolConfig,
+                                routeBuilder: { points, tolerance, snap in
+                                    store.buildRoute(points, tolerance: tolerance, snapRadius: snap)
+                                },
+                                onRouteFinished: { route in
+                                    store.finishRoute(route)
+                                },
+                                onPencil: {
+                                    store.pencilSeen()
+                                },
+                                drcMarkers: store.drcMarkers,
+                                drcFocus: store.drcFocusPosition,
+                                demoStroke: store.demoStroke)
                         .ignoresSafeArea(edges: [.bottom, .horizontal])
 
                     statusBar
@@ -55,9 +68,16 @@ struct ContentView: View {
                     }
 
                     if store.editMode {
-                        EditBar()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                        VStack(spacing: 6) {
+                            EditBar()
+
+                            if store.drawTool {
+                                RouteToolBar()
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
                     if let toast = store.toast {
@@ -77,6 +97,7 @@ struct ContentView: View {
             }
             .animation(.easeOut(duration: 0.2), value: store.selection?.item)
             .animation(.easeOut(duration: 0.2), value: store.editMode)
+            .animation(.easeOut(duration: 0.2), value: store.drawTool)
             .animation(.easeOut(duration: 0.2), value: store.toast)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -103,6 +124,14 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSearch) {
                 SearchView()
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: $store.showDRC) {
+                DRCView()
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: $store.showFab) {
+                FabView()
                     .environmentObject(store)
             }
             .sheet(item: $store.activeSheet) { sheet in
@@ -203,6 +232,18 @@ struct ContentView: View {
                 }
 
                 Button {
+                    store.showDRC = true
+                } label: {
+                    Label("Design check", systemImage: store.drcMarkers.isEmpty ? "checkmark.shield" : "exclamationmark.shield")
+                }
+
+                Button {
+                    store.showFab = true
+                } label: {
+                    Label("Fabrication files", systemImage: "shippingbox")
+                }
+
+                Button {
                     showSearch = true
                 } label: {
                     Label("Search", systemImage: "magnifyingglass")
@@ -257,7 +298,12 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            if store.editMode && store.editFootprint != nil {
+            if store.drawTool {
+                Image(systemName: "pencil.tip")
+                Text(store.fingerDrawing
+                     ? "Draw from a pad, via or track end · Two fingers move the board" as LocalizedStringKey
+                     : "Draw with Apple Pencil from a pad, via or track end · Fingers move the board")
+            } else if store.editMode && store.editFootprint != nil {
                 Image(systemName: "hand.draw")
                 Text("Drag the footprint to move it · \(gridTitle(store.gridStep))")
             } else if store.editMode {
@@ -404,6 +450,14 @@ struct HelpView: View {
                     Text("Copper zone fills are not recalculated. After moving parts, refill zones in KiCad (B).")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("Tracks, design check and fabrication") {
+                    helpRow("pencil.tip.crop.circle", "Draw tracks", "In the edit bar. Draw with Apple Pencil from a pad, via or track end: the line becomes a clean 45° track that locks onto the copper")
+                    helpRow("square.3.layers.3d", "Layer, width and via", "Chosen in the drawing bar. Starting or ending on a track of another layer adds a via")
+                    helpRow("hand.raised", "Shorts are refused", "A track that would touch another net is not added; red rings show where")
+                    helpRow("checkmark.shield", "Design check", "Clearances, shorts, holes, board edge, courtyards and missing connections, with the rules of the KiCad project file when available")
+                    helpRow("shippingbox", "Fabrication files", "Gerber, drill, bill of materials and placement files in one ZIP for any board house")
                 }
 
                 Section("Keyboard / trackpad") {

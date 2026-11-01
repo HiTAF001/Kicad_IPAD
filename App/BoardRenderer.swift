@@ -17,7 +17,113 @@
 
 import MetalKit
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 import simd
+
+/// Pencil track drawing, as configured in the edit bar.
+struct RouteToolConfig: Equatable {
+    var settings: RouteSettings
+    /// colour of the copper layer drawn on
+    var color: SIMD4<Float>
+    /// fingers draw too (no Apple Pencil in use)
+    var allowFinger: Bool
+}
+
+/// A design rule check result shown on the board.
+struct DRCMarker: Equatable {
+    let position: SIMD2<Double>
+    let isError: Bool
+}
+
+/// Recognises one drawn stroke: an Apple Pencil touch, or one finger when allowed. It begins
+/// only after the touch has moved a little, so taps still select.
+final class StrokeGestureRecognizer: UIGestureRecognizer {
+    var acceptsStrokes = false
+    var allowFinger = false
+    private(set) var points: [CGPoint] = []
+    private(set) var sawPencil = false
+    private var tracked: UITouch?
+    private var start = CGPoint.zero
+
+    func consumePencilFlag() -> Bool {
+        let seen = sawPencil
+        sawPencil = false
+        return seen
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let tracked {
+            // a second finger while drawing with a finger: it was a pan or pinch after all
+            if tracked.type == .direct {
+                state = state == .possible ? .failed : .cancelled
+            } else {
+                for t in touches where t !== tracked {
+                    ignore(t, for: event) // palm resting while drawing with the pencil
+                }
+            }
+            return
+        }
+
+        guard acceptsStrokes, let t = touches.first, touches.count == 1 else {
+            state = .failed
+            return
+        }
+
+        if t.type == .pencil {
+            sawPencil = true
+        } else if !(allowFinger && t.type == .direct) {
+            state = .failed
+            return
+        }
+
+        tracked = t
+        start = t.location(in: view)
+        points = [start]
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = tracked, touches.contains(t) else { return }
+
+        for c in event.coalescedTouches(for: t) ?? [t] {
+            let p = c.location(in: view)
+
+            if let last = points.last, hypot(p.x - last.x, p.y - last.y) < 0.75 {
+                continue
+            }
+
+            points.append(p)
+        }
+
+        if state == .possible {
+            let p = t.location(in: view)
+
+            if hypot(p.x - start.x, p.y - start.y) > 6 {
+                state = .began
+            }
+        } else {
+            state = .changed
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = tracked, touches.contains(t) else { return }
+
+        points.append(t.location(in: view))
+        state = state == .possible ? .failed : .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = tracked, touches.contains(t) else { return }
+
+        state = state == .possible ? .failed : .cancelled
+    }
+
+    override func reset() {
+        super.reset()
+        tracked = nil
+        points = []
+    }
+}
 
 private struct Uniforms {
     var scale: SIMD2<Float>
@@ -94,6 +200,23 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     private var dragOffset: SIMD2<Double>?      // snapped, while the finger is down
     private var committedOffset: SIMD2<Double>? // after release, until the new board arrives
 
+    // pencil track drawing
+    private var routeConfig: RouteToolConfig?
+    private var strokeGesture: StrokeGestureRecognizer?
+    private weak var panGesture: UIPanGestureRecognizer?
+    private var strokePoints: [SIMD2<Double>] = []
+    private var routePreview: RoutePreview?
+    private var committedRoute: RoutePreview?
+    private var committedColor = SIMD4<Float>(0.78, 0.2, 0.2, 1)
+    private var lastRouteBuild: CFTimeInterval = 0
+    private var settleStart: CFTimeInterval?
+    private var settleLink: CADisplayLink?
+    private var lastDemoStroke: [SIMD2<Double>]?
+
+    // design rule check markers
+    private var drcMarkers: [DRCMarker] = []
+    private var drcFocus: SIMD2<Double>?
+
     // ratsnest geometry, rebuilt when the board or the zoom changes noticeably
     private var ratsnestBuffer: MTLBuffer?
     private var ratsnestVertexCount = 0
@@ -114,6 +237,12 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     var onDragSnap: (@MainActor (SIMD2<Double>) -> SIMD2<Double>)?
     /// Finger lifted: raw world offset.
     var onDragEnd: (@MainActor (SIMD2<Double>) -> Void)?
+    /// Stroke points (mm), tolerance (mm), snap radius (mm) -> clean track preview.
+    var routeBuilder: (@MainActor ([SIMD2<Double>], Double, Double) -> RoutePreview?)?
+    /// Pencil lifted: the final preview (nil if the stroke made nothing).
+    var onRouteFinished: (@MainActor (RoutePreview?) -> Void)?
+    /// An Apple Pencil touch was seen.
+    var onPencil: (@MainActor () -> Void)?
 
     override init() {
         device = MetalContext.shared.device
@@ -202,6 +331,13 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         pan.allowedScrollTypesMask = .all // trackpad / mouse wheel scrolling pans
         pan.delegate = self
         view.addGestureRecognizer(pan)
+        panGesture = pan
+
+        let stroke = StrokeGestureRecognizer(target: self, action: #selector(handleStroke(_:)))
+        stroke.delegate = self
+        stroke.cancelsTouchesInView = false
+        view.addGestureRecognizer(stroke)
+        strokeGesture = stroke
 
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.delegate = self
@@ -229,11 +365,34 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
     func update(board: LoadedBoard?, visibleSlots: Set<Int>, hiddenKinds: Set<Int>, flipped: Bool,
                 fitToken: Int, highlight: HighlightSpec?, measureA: SIMD2<Double>?,
-                measureB: SIMD2<Double>?, focus: FocusRequest?, dragPreview: SIMD2<Double>?) {
+                measureB: SIMD2<Double>?, focus: FocusRequest?, dragPreview: SIMD2<Double>?,
+                route: RouteToolConfig?, drcMarkers: [DRCMarker], drcFocus: SIMD2<Double>?,
+                demoStroke: [SIMD2<Double>]?) {
         var dirty = false
         var highlightDirty = false
 
+        if route != routeConfig {
+            routeConfig = route
+            configureStrokeInput()
+
+            if route == nil {
+                strokePoints = []
+                routePreview = nil
+            }
+
+            requestDraw()
+        }
+
+        if drcMarkers != self.drcMarkers || drcFocus != self.drcFocus {
+            self.drcMarkers = drcMarkers
+            self.drcFocus = drcFocus
+            requestDraw()
+        }
+
         if board !== self.board {
+            // the track just drawn is part of the new board now
+            committedRoute = nil
+
             // a board rebuilt after an edit keeps the camera
             let sameDocument = board != nil && self.board != nil && board!.lineage != 0
                 && board!.lineage == self.board!.lineage
@@ -296,6 +455,37 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
         if dirty || highlightDirty {
             requestDraw()
+        }
+
+        if let demoStroke, demoStroke != lastDemoStroke {
+            lastDemoStroke = demoStroke
+            strokePoints = demoStroke
+            routePreview = routeBuilder?(demoStroke, 0.3, 0.6)
+            requestDraw()
+        }
+    }
+
+    /// Pencil always draws while the tool is on; one finger draws only without a pencil, and
+    /// then the board pans with two fingers.
+    private func configureStrokeInput() {
+        let active = routeConfig != nil
+        let finger = routeConfig?.allowFinger ?? false
+        strokeGesture?.acceptsStrokes = active
+        strokeGesture?.allowFinger = finger
+
+        guard let pan = panGesture else { return }
+
+        if active {
+            pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue),
+                                     NSNumber(value: UITouch.TouchType.indirect.rawValue),
+                                     NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+            pan.minimumNumberOfTouches = finger ? 2 : 1
+        } else {
+            pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue),
+                                     NSNumber(value: UITouch.TouchType.indirect.rawValue),
+                                     NSNumber(value: UITouch.TouchType.pencil.rawValue),
+                                     NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+            pan.minimumNumberOfTouches = 1
         }
     }
 
@@ -570,6 +760,83 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         onTap?(screenToWorld(g.location(in: view), in: view), tolerance)
     }
 
+    // MARK: - Pencil strokes
+
+    @objc private func handleStroke(_ g: StrokeGestureRecognizer) {
+        guard let view = g.view else { return }
+
+        if g.consumePencilFlag() {
+            onPencil?()
+        }
+
+        switch g.state {
+        case .began, .changed:
+            strokePoints = g.points.map { screenToWorld($0, in: view) }
+            settleStart = nil
+            let now = CACurrentMediaTime()
+
+            // rebuilding the clean track is cheap, but not free: ~25 times a second
+            if now - lastRouteBuild > 0.04 || routePreview == nil {
+                lastRouteBuild = now
+                routePreview = buildPreview(in: view)
+            }
+
+            requestDraw()
+
+        case .ended:
+            strokePoints = g.points.map { screenToWorld($0, in: view) }
+            let finished = buildPreview(in: view)
+            routePreview = nil
+
+            if let finished, finished.canCommit {
+                committedRoute = finished
+                committedColor = routeConfig?.color ?? committedColor
+            }
+
+            startSettle()
+            onRouteFinished?(finished)
+
+        default: // cancelled / failed
+            strokePoints = []
+            routePreview = nil
+            requestDraw()
+        }
+    }
+
+    private func buildPreview(in view: UIView) -> RoutePreview? {
+        let s = Double(view.contentScaleFactor)
+        let tolerance = min(max(5.0 * s / zoom, 0.03), 2.0) // ~5 points on screen
+        let snap = min(max(16.0 * s / zoom, 0.15), 3.0)     // ~16 points
+        return routeBuilder?(strokePoints, tolerance, snap)
+    }
+
+    /// The hand-drawn line fades into the clean track.
+    private func startSettle() {
+        settleStart = CACurrentMediaTime()
+        settleLink?.invalidate()
+        let link = CADisplayLink(target: self, selector: #selector(settleTick))
+        link.add(to: .main, forMode: .common)
+        settleLink = link
+        requestDraw()
+    }
+
+    @objc private func settleTick() {
+        guard let start = settleStart else {
+            settleLink?.invalidate()
+            settleLink = nil
+            return
+        }
+
+        if CACurrentMediaTime() - start > 0.45 {
+            settleStart = nil
+            strokePoints = []
+            settleLink?.invalidate()
+            settleLink = nil
+        }
+
+        requestDraw()
+    }
+
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -675,6 +942,13 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
                 }
             }
 
+            // ---- pencil stroke and the clean track built from it
+            if let overlayState {
+                encoder.setDepthStencilState(overlayState)
+                drawRouteOverlay(encoder: encoder, uniforms: u)
+                drawDRCMarkers(encoder: encoder, uniforms: u)
+            }
+
             // ---- measuring overlay (constant size on screen)
             if let a = measureA, let overlayState, let device {
                 let px = 1.0 / zoom // one drawable pixel in millimetres
@@ -712,6 +986,166 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         encoder.endEncoding()
         commands.present(drawable)
         commands.commit()
+    }
+
+    // MARK: - Route and DRC overlays
+
+    private func drawTriangles(_ verts: [SIMD2<Float>], color: SIMD4<Float>, encoder: MTLRenderCommandEncoder,
+                               uniforms: Uniforms) {
+        guard !verts.isEmpty, let device,
+              let buffer = device.makeBuffer(bytes: verts, length: verts.count * MemoryLayout<SIMD2<Float>>.stride,
+                                             options: .storageModeShared) else { return }
+
+        var u = uniforms
+        u.color = color
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: verts.count)
+    }
+
+    private func drawRouteOverlay(encoder: MTLRenderCommandEncoder, uniforms: Uniforms) {
+        let px = Double(view?.contentScaleFactor ?? 2) / zoom // one point in millimetres
+        var settle = 0.0
+
+        if let start = settleStart {
+            settle = min(1, (CACurrentMediaTime() - start) / 0.45)
+        }
+
+        // the clean track (or the one just committed, until the rebuilt board shows it)
+        if let route = routePreview ?? committedRoute {
+            let base = routeConfig?.color ?? committedColor
+            let mix: Float = 0.35
+            var color = SIMD4<Float>(base.x + (1 - base.x) * mix, base.y + (1 - base.y) * mix,
+                                     base.z + (1 - base.z) * mix, 0.92)
+
+            if route.blocked {
+                color = SIMD4<Float>(1, 0.27, 0.23, 0.9)
+            }
+
+            var copper: [SIMD2<Float>] = []
+            let w = max(route.width, 1.5 * px)
+
+            for t in route.tracks {
+                let a = SIMD2(Double(t.x), Double(t.y)), b = SIMD2(Double(t.z), Double(t.w))
+                appendSegment(&copper, a, b, width: w)
+                appendDisc(&copper, a, radius: w / 2)
+                appendDisc(&copper, b, radius: w / 2)
+            }
+
+            drawTriangles(copper, color: color, encoder: encoder, uniforms: uniforms)
+
+            var viaRing: [SIMD2<Float>] = []
+            var viaHole: [SIMD2<Float>] = []
+
+            for v in route.vias {
+                let c = SIMD2(Double(v.x), Double(v.y))
+                appendDisc(&viaRing, c, radius: Double(v.z) / 2)
+                appendDisc(&viaHole, c, radius: Double(v.z) / 4)
+            }
+
+            drawTriangles(viaRing, color: SIMD4<Float>(0.85, 0.85, 0.82, 0.95), encoder: encoder, uniforms: uniforms)
+            drawTriangles(viaHole, color: SIMD4<Float>(0.1, 0.1, 0.1, 0.95), encoder: encoder, uniforms: uniforms)
+
+            // where the track locks onto copper
+            var anchors: [SIMD2<Float>] = []
+
+            if route.anchors.count >= 2 {
+                if route.startAnchored {
+                    appendRing(&anchors, SIMD2(Double(route.anchors[0].x), Double(route.anchors[0].y)),
+                               radius: 7 * px, width: 2.2 * px)
+                }
+
+                if route.endAnchored {
+                    appendRing(&anchors, SIMD2(Double(route.anchors[1].x), Double(route.anchors[1].y)),
+                               radius: 7 * px, width: 2.2 * px)
+                }
+            }
+
+            drawTriangles(anchors, color: SIMD4<Float>(0.3, 0.95, 0.45, 1), encoder: encoder, uniforms: uniforms)
+
+            // other nets' copper the track would touch or come too close to
+            var shorts: [SIMD2<Float>] = []
+            var close: [SIMD2<Float>] = []
+
+            for c in route.conflicts {
+                let p = SIMD2(Double(c.x), Double(c.y))
+
+                if c.z > 0.5 {
+                    appendRing(&shorts, p, radius: 9 * px, width: 2.5 * px)
+                } else {
+                    appendRing(&close, p, radius: 9 * px, width: 2.5 * px)
+                }
+            }
+
+            drawTriangles(shorts, color: SIMD4<Float>(1, 0.2, 0.2, 1), encoder: encoder, uniforms: uniforms)
+            drawTriangles(close, color: SIMD4<Float>(1, 0.72, 0.1, 1), encoder: encoder, uniforms: uniforms)
+        }
+
+        // the hand-drawn line, fading out once the pencil is lifted
+        if strokePoints.count >= 2 {
+            var line: [SIMD2<Float>] = []
+
+            for i in 0..<(strokePoints.count - 1) {
+                appendSegment(&line, strokePoints[i], strokePoints[i + 1], width: 2.5 * px)
+            }
+
+            for p in strokePoints {
+                appendDisc(&line, p, radius: 1.25 * px)
+            }
+
+            let alpha = Float(0.6 * (1 - settle))
+            drawTriangles(line, color: SIMD4<Float>(1, 1, 1, alpha), encoder: encoder, uniforms: uniforms)
+        }
+    }
+
+    private func drawDRCMarkers(encoder: MTLRenderCommandEncoder, uniforms: Uniforms) {
+        guard !drcMarkers.isEmpty || drcFocus != nil else { return }
+
+        let px = Double(view?.contentScaleFactor ?? 2) / zoom
+        var errors: [SIMD2<Float>] = []
+        var warnings: [SIMD2<Float>] = []
+        var outline: [SIMD2<Float>] = []
+
+        for m in drcMarkers {
+            appendDiamond(&outline, m.position, radius: 8 * px)
+
+            if m.isError {
+                appendDiamond(&errors, m.position, radius: 6 * px)
+            } else {
+                appendDiamond(&warnings, m.position, radius: 6 * px)
+            }
+        }
+
+        drawTriangles(outline, color: SIMD4<Float>(0, 0, 0, 0.8), encoder: encoder, uniforms: uniforms)
+        drawTriangles(errors, color: SIMD4<Float>(1, 0.25, 0.25, 1), encoder: encoder, uniforms: uniforms)
+        drawTriangles(warnings, color: SIMD4<Float>(1, 0.78, 0.1, 1), encoder: encoder, uniforms: uniforms)
+
+        if let f = drcFocus {
+            var ring: [SIMD2<Float>] = []
+            appendRing(&ring, f, radius: 16 * px, width: 3 * px)
+            drawTriangles(ring, color: SIMD4<Float>(1, 1, 1, 0.95), encoder: encoder, uniforms: uniforms)
+        }
+    }
+
+    private func appendRing(_ out: inout [SIMD2<Float>], _ c: SIMD2<Double>, radius: Double, width: Double) {
+        let segments = 32
+        let r0 = max(0, radius - width / 2), r1 = radius + width / 2
+
+        for i in 0..<segments {
+            let a0 = Double(i) / Double(segments) * 2 * .pi
+            let a1 = Double(i + 1) / Double(segments) * 2 * .pi
+            let d0 = SIMD2(cos(a0), sin(a0)), d1 = SIMD2(cos(a1), sin(a1))
+            let p0 = SIMD2<Float>(c + d0 * r0), p1 = SIMD2<Float>(c + d0 * r1)
+            let p2 = SIMD2<Float>(c + d1 * r1), p3 = SIMD2<Float>(c + d1 * r0)
+            out.append(contentsOf: [p0, p1, p2, p0, p2, p3])
+        }
+    }
+
+    private func appendDiamond(_ out: inout [SIMD2<Float>], _ c: SIMD2<Double>, radius: Double) {
+        let top = SIMD2<Float>(c + SIMD2(0, -radius)), right = SIMD2<Float>(c + SIMD2(radius, 0))
+        let bottom = SIMD2<Float>(c + SIMD2(0, radius)), left = SIMD2<Float>(c + SIMD2(-radius, 0))
+        out.append(contentsOf: [top, right, bottom, top, bottom, left])
     }
 
     // MARK: - Overlay geometry (world coordinates)

@@ -33,7 +33,8 @@ def swift_key(lit):
                 depth -= lit[j] == ')'
                 j += 1
             expr = lit[i + 2:j - 1]
-            out += '%lld' if any(h in expr for h in INT_HINTS) else '%@'
+            # String(...) makes it a string argument whatever is inside
+            out += '%lld' if not expr.startswith('String(') and any(h in expr for h in INT_HINTS) else '%@'
             i = j
         elif lit.startswith('\\"', i):
             out += '"'

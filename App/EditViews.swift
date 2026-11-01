@@ -23,6 +23,18 @@ struct EditBar: View {
 
             separator
 
+            Button {
+                store.drawTool.toggle()
+            } label: {
+                Image(systemName: store.drawTool ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
+                    .foregroundStyle(store.drawTool ? Color.accentColor : Color.primary)
+                    .frame(minWidth: 40, minHeight: 36)
+            }
+            .disabled(!store.canEdit && !store.drawTool)
+            .accessibilityLabel(store.drawTool ? "Stop drawing tracks" as LocalizedStringKey : "Draw tracks")
+
+            separator
+
             barButton(String(localized: "Rotate 90° left"), "rotate.left", enabled: store.editFootprint != nil) {
                 store.rotateSelection(by: 90)
             }
