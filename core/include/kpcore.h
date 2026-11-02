@@ -56,7 +56,8 @@ enum
     KP_ITEM_SCH_JUNCTION = 12,
     KP_ITEM_SCH_LABEL = 13,
     KP_ITEM_SCH_SHEET = 14,
-    KP_ITEM_SCH_NOTE = 15
+    KP_ITEM_SCH_NOTE = 15,       /**< text, graphic, image, no-connect flag, bus entry */
+    KP_ITEM_SCH_SHEET_PIN = 16
 };
 
 /** Layer slot kinds. */
@@ -209,6 +210,23 @@ const char* kp_sch_sheet_file( const kp_board* board, int32_t sheet );
 int32_t     kp_sch_sheet_for_item( const kp_board* board, int32_t sheet_item ); /**< child sheet, -1 */
 int32_t     kp_sch_missing_count( const kp_board* board );
 const char* kp_sch_missing_file( const kp_board* board, int32_t index );
+/** Netlist of the whole schematic as text: "net name<TAB>ref:pin ref:pin\n" per net. */
+const char* kp_sch_netlist( kp_board* board );
+
+/*
+ * On a schematic board the board functions describe the open sheet: kp_board_pick /
+ * item_info / item_ranges / item_bounds work on its items (KP_ITEM_SCH_*), "footprints" are
+ * its symbols and nets (1..count-1) are the nets of the whole hierarchy.
+ */
+
+/** Sheets on which a net has items; returns their number, writes at most max_out. */
+int32_t kp_sch_net_sheets( const kp_board* board, int32_t net, int32_t* out, int32_t max_out );
+
+/** Symbols of the whole hierarchy (for search): sheet and index within it, shown reference
+ * ("U1A") and value. The strings stay valid while the board lives. */
+int32_t kp_sch_symbol_count( const kp_board* board );
+int32_t kp_sch_symbol_entry( const kp_board* board, int32_t i, int32_t* sheet, int32_t* index,
+                             const char** reference, const char** value );
 
 void kp_board_free( kp_board* board );
 

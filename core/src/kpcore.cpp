@@ -17,6 +17,7 @@
 #include "fab.h"
 #include "gerber.h"
 #include "schematic.h"
+#include "sch_pick.h"
 #include "document.h"
 #include "edit.h"
 #include "geom.h"
@@ -48,6 +49,14 @@ struct kp_board
     std::shared_ptr<const kp::Schematic> sch; // schematic boards: the whole hierarchy
     int                                  sheet = 0;
     std::string                          schScratch;
+    kp::SchPickCache                     schPick;
+    struct SchSymbolEntry
+    {
+        int         sheet, index;
+        std::string ref, value;
+    };
+    std::vector<SchSymbolEntry>          schSymbols; // whole hierarchy, filled on demand
+    std::vector<std::string>             schSheetSymbolRefs, schSheetSymbolValues; // current sheet
     std::vector<int>   docMap;     // parse index -> document item (boards built from a kp_doc)
     const void*        docOwner = nullptr;
     uint64_t           docState = 0;
@@ -93,6 +102,101 @@ static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
 
 /// Load a board with aLoader (which fills kp::Board or throws), then build the mesh, the
 /// connectivity (KiCad boards only) and the statistics.
+extern "C" int32_t kp_sch_net_sheets( const kp_board* board, int32_t net, int32_t* out, int32_t max_out )
+{
+    if( !board || !board->sch || net <= 0 || net > (int32_t) board->sch->nets.size() )
+        return 0;
+
+    std::vector<int> sheets = kp::SchNetSheets( *board->sch, net - 1 );
+
+    for( int32_t i = 0; out && i < (int32_t) sheets.size() && i < max_out; ++i )
+        out[i] = sheets[(size_t) i];
+
+    return (int32_t) sheets.size();
+}
+
+
+static void schSymbolList( const kp_board* board )
+{
+    kp_board* b = const_cast<kp_board*>( board );
+
+    if( !b->schSymbols.empty() || !board->sch )
+        return;
+
+    const kp::Schematic& sch = *board->sch;
+
+    for( size_t si = 0; si < sch.sheets.size(); ++si )
+    {
+        const kp::SheetNode& node = sch.sheets[si];
+
+        if( node.screen < 0 )
+            continue;
+
+        const kp::SchScreen& sc = sch.screens[(size_t) node.screen];
+
+        for( size_t i = 0; i < sc.symbols.size(); ++i )
+        {
+            const kp::SchSymbol& sym = sc.symbols[i];
+            std::string          value;
+
+            for( const kp::SchField& f : sym.fields )
+            {
+                if( f.name == "Value" )
+                    value = kp::DisplayNetName( sch.FieldValue( node, sym, f ) );
+            }
+
+            b->schSymbols.push_back( { (int) si, (int) i, kp::SchematicShownReference( sch, node, sym ), value } );
+        }
+    }
+}
+
+
+extern "C" int32_t kp_sch_symbol_count( const kp_board* board )
+{
+    if( !board || !board->sch )
+        return 0;
+
+    schSymbolList( board );
+    return (int32_t) board->schSymbols.size();
+}
+
+
+extern "C" int32_t kp_sch_symbol_entry( const kp_board* board, int32_t i, int32_t* sheet, int32_t* index,
+                                        const char** reference, const char** value )
+{
+    if( !board || !board->sch )
+        return 0;
+
+    schSymbolList( board );
+
+    if( i < 0 || i >= (int32_t) board->schSymbols.size() )
+        return 0;
+
+    const auto& e = board->schSymbols[(size_t) i];
+
+    if( sheet )
+        *sheet = e.sheet;
+    if( index )
+        *index = e.index;
+    if( reference )
+        *reference = e.ref.c_str();
+    if( value )
+        *value = e.value.c_str();
+
+    return 1;
+}
+
+
+extern "C" const char* kp_sch_netlist( kp_board* board )
+{
+    if( !board || !board->sch )
+        return "";
+
+    board->schScratch = kp::SchematicNetlistText( *board->sch );
+    return board->schScratch.c_str();
+}
+
+
 static kp_board* buildWith( const std::function<void( kp_board& )>& aLoader, bool aConnectivity, char* error,
                             size_t error_size );
 
@@ -454,6 +558,11 @@ static kp_board* buildWith( const std::function<void( kp_board& )>& aLoader, boo
             o.graphics = (int32_t) ( sc.graphics.size() + sc.texts.size() );
             o.texts = (int32_t) sc.labels.size();
             o.copper_layers = 0;
+            o.nets = 0;
+
+            for( const kp::SchNet& n : b->sch->nets )
+                o.nets += n.bus ? 0 : 1;
+
             o.width_mm = sc.paperW;
             o.height_mm = sc.paperH;
             o.file_version = sc.version;
@@ -670,8 +779,20 @@ extern "C" int32_t kp_board_pick( const kp_board* board, double x, double y, dou
         return 0;
 
     std::vector<kp::PickHit> hits;
-    kp::Pick( board->board, board->mesh, kp::Pt( x, y ), tolerance,
-              makeFilter( slot_visible, slot_count, hidden_kinds, flipped ), hits );
+
+    if( board->sch )
+    {
+        kp::SchPick( *board->sch, board->sheet, board->mesh, const_cast<kp_board*>( board )->schPick, kp::Pt( x, y ),
+                     tolerance, makeFilter( slot_visible, slot_count, hidden_kinds, flipped ), hits );
+
+        for( kp::PickHit& h : hits )
+            h.net = h.net + 1; // 0 = none, as for boards
+    }
+    else
+    {
+        kp::Pick( board->board, board->mesh, kp::Pt( x, y ), tolerance,
+                  makeFilter( slot_visible, slot_count, hidden_kinds, flipped ), hits );
+    }
 
     int32_t n = 0;
 
@@ -718,7 +839,11 @@ extern "C" const char* kp_board_item_info( kp_board* board, const kp_item* item 
     if( !board || !item )
         return "";
 
-    board->infoScratch = kp::ItemInfo( board->board, board->mesh, (kp::ItemType) item->type, item->index );
+    if( board->sch )
+        board->infoScratch = kp::SchItemInfo( *board->sch, board->sheet, (kp::ItemType) item->type, item->index );
+    else
+        board->infoScratch = kp::ItemInfo( board->board, board->mesh, (kp::ItemType) item->type, item->index );
+
     return board->infoScratch.c_str();
 }
 
@@ -728,7 +853,11 @@ extern "C" const char* kp_board_net_info( kp_board* board, int32_t net )
     if( !board )
         return "";
 
-    board->infoScratch = kp::NetInfo( board->board, net );
+    if( board->sch )
+        board->infoScratch = kp::SchNetInfo( *board->sch, board->sheet, net - 1 );
+    else
+        board->infoScratch = kp::NetInfo( board->board, net );
+
     return board->infoScratch.c_str();
 }
 
@@ -739,8 +868,14 @@ extern "C" int32_t kp_board_item_bounds( const kp_board* board, const kp_item* i
     if( !board || !item )
         return 0;
 
-    kp::BBox b = whole_net ? kp::NetBounds( board->board, item->net )
-                           : kp::ItemBounds( board->board, board->mesh, (kp::ItemType) item->type, item->index );
+    kp::BBox b;
+
+    if( board->sch )
+        b = whole_net ? kp::SchNetBounds( *board->sch, board->sheet, board->mesh, item->net - 1 )
+                      : kp::SchItemBounds( *board->sch, board->sheet, board->mesh, (kp::ItemType) item->type, item->index );
+    else
+        b = whole_net ? kp::NetBounds( board->board, item->net )
+                      : kp::ItemBounds( board->board, board->mesh, (kp::ItemType) item->type, item->index );
 
     if( !b.valid() )
         return 0;
@@ -770,8 +905,12 @@ extern "C" int32_t kp_board_item_ranges( kp_board* board, const kp_item* item, i
 
     if( !same )
     {
-        kp::HighlightRanges( board->board, board->mesh, (kp::ItemType) item->type, item->index,
-                             whole_net != 0, item->net, board->rangeScratch );
+        if( board->sch )
+            kp::SchHighlightRanges( *board->sch, board->sheet, board->mesh, (kp::ItemType) item->type, item->index,
+                                    whole_net != 0, item->net - 1, board->rangeScratch );
+        else
+            kp::HighlightRanges( board->board, board->mesh, (kp::ItemType) item->type, item->index,
+                                 whole_net != 0, item->net, board->rangeScratch );
         board->rangeKey = *item;
         board->rangeWholeNet = whole_net;
     }
@@ -794,14 +933,62 @@ extern "C" int32_t kp_board_item_ranges( kp_board* board, const kp_item* item, i
 }
 
 
+static const kp::SchScreen* schScreen( const kp_board* board )
+{
+    if( !board || !board->sch || board->sheet < 0 || board->sheet >= (int) board->sch->sheets.size() )
+        return nullptr;
+
+    int screen = board->sch->sheets[(size_t) board->sheet].screen;
+    return screen < 0 ? nullptr : &board->sch->screens[(size_t) screen];
+}
+
+
+/// References and values of the symbols on a schematic board's sheet.
+static void schSheetSymbols( const kp_board* board )
+{
+    kp_board*            b = const_cast<kp_board*>( board );
+    const kp::SchScreen* sc = schScreen( board );
+
+    if( !sc || b->schSheetSymbolRefs.size() == sc->symbols.size() )
+        return;
+
+    const kp::SheetNode& node = board->sch->sheets[(size_t) board->sheet];
+    b->schSheetSymbolRefs.clear();
+    b->schSheetSymbolValues.clear();
+
+    for( const kp::SchSymbol& sym : sc->symbols )
+    {
+        std::string value;
+
+        for( const kp::SchField& f : sym.fields )
+        {
+            if( f.name == "Value" )
+                value = kp::DisplayNetName( board->sch->FieldValue( node, sym, f ) );
+        }
+
+        b->schSheetSymbolRefs.push_back( kp::SchematicShownReference( *board->sch, node, sym ) );
+        b->schSheetSymbolValues.push_back( value );
+    }
+}
+
+
 extern "C" int32_t kp_board_footprint_count( const kp_board* board )
 {
+    if( const kp::SchScreen* sc = schScreen( board ) )
+        return (int32_t) sc->symbols.size();
+
     return board ? (int32_t) board->board.footprints.size() : 0;
 }
 
 
 extern "C" const char* kp_board_footprint_ref( const kp_board* board, int32_t index )
 {
+    if( board && board->sch )
+    {
+        schSheetSymbols( board );
+        return index >= 0 && index < (int32_t) board->schSheetSymbolRefs.size() ? board->schSheetSymbolRefs[(size_t) index].c_str() : "";
+    }
+
     if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
         return "";
 
@@ -811,6 +998,12 @@ extern "C" const char* kp_board_footprint_ref( const kp_board* board, int32_t in
 
 extern "C" const char* kp_board_footprint_value( const kp_board* board, int32_t index )
 {
+    if( board && board->sch )
+    {
+        schSheetSymbols( board );
+        return index >= 0 && index < (int32_t) board->schSheetSymbolValues.size() ? board->schSheetSymbolValues[(size_t) index].c_str() : "";
+    }
+
     if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
         return "";
 
@@ -829,16 +1022,35 @@ extern "C" int32_t kp_board_footprint_back( const kp_board* board, int32_t index
 
 extern "C" int32_t kp_board_net_count( const kp_board* board )
 {
+    if( board && board->sch )
+        return (int32_t) board->sch->nets.size() + 1;
+
     return board ? (int32_t) board->board.nets.size() : 0;
 }
 
 
 extern "C" const char* kp_board_net_name( const kp_board* board, int32_t net )
 {
+    kp_board* b = const_cast<kp_board*>( board );
+
+    if( board && board->sch )
+    {
+        if( net <= 0 || net > (int32_t) board->sch->nets.size() )
+            return "";
+
+        if( b->netDisplay.size() != board->sch->nets.size() + 1 )
+        {
+            b->netDisplay.assign( 1, std::string() );
+
+            for( const kp::SchNet& n : board->sch->nets )
+                b->netDisplay.push_back( kp::DisplayNetName( n.name ) );
+        }
+
+        return b->netDisplay[(size_t) net].c_str();
+    }
+
     if( !board || net < 0 || net >= (int32_t) board->board.nets.size() )
         return "";
-
-    kp_board* b = const_cast<kp_board*>( board );
 
     if( b->netDisplay.size() != b->board.nets.size() )
     {
@@ -855,6 +1067,23 @@ extern "C" const char* kp_board_net_name( const kp_board* board, int32_t net )
 extern "C" int32_t kp_board_footprint_pose( const kp_board* board, int32_t index, double* x, double* y,
                                             double* angle )
 {
+    if( const kp::SchScreen* sc = schScreen( board ) )
+    {
+        if( index < 0 || index >= (int32_t) sc->symbols.size() )
+            return 0;
+
+        const kp::SchSymbol& sym = sc->symbols[(size_t) index];
+
+        if( x )
+            *x = sym.pos.x;
+        if( y )
+            *y = sym.pos.y;
+        if( angle )
+            *angle = 0;
+
+        return 1;
+    }
+
     if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
         return 0;
 
@@ -887,6 +1116,15 @@ extern "C" void kp_set_translations( const char* const* keys, const char* const*
 
 extern "C" int32_t kp_board_footprint_pad_count( const kp_board* board, int32_t index )
 {
+    if( const kp::SchScreen* sc = schScreen( board ) )
+    {
+        if( index < 0 || index >= (int32_t) sc->symbols.size() )
+            return 0;
+
+        const kp::LibSymbol* lib = board->sch->Lib( *sc, sc->symbols[(size_t) index] );
+        return lib ? (int32_t) lib->pins.size() : 0;
+    }
+
     if( !board || index < 0 || index >= (int32_t) board->board.footprints.size() )
         return 0;
 
@@ -896,6 +1134,9 @@ extern "C" int32_t kp_board_footprint_pad_count( const kp_board* board, int32_t 
 
 extern "C" int32_t kp_board_net_pad_count( const kp_board* board, int32_t net )
 {
+    if( board && board->sch )
+        return net > 0 && net <= (int32_t) board->sch->nets.size() ? board->sch->nets[(size_t) net - 1].pinCount : 0;
+
     if( !board || net <= 0 )
         return 0;
 
@@ -1188,6 +1429,19 @@ extern "C" int32_t kp_board_net_find( const kp_board* board, const char* name )
 {
     if( !board || !name )
         return -1;
+
+    if( board->sch )
+    {
+        for( size_t i = 0; i < board->sch->nets.size(); ++i )
+        {
+            const std::string& n = board->sch->nets[i].name;
+
+            if( n == name || kp::DisplayNetName( n ) == name )
+                return (int32_t) i + 1;
+        }
+
+        return -1;
+    }
 
     auto it = board->board.netByName.find( name );
     return it == board->board.netByName.end() ? -1 : it->second;

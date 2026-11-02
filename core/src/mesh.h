@@ -62,6 +62,7 @@ enum class ItemType : uint8_t
     SCH_LABEL,
     SCH_SHEET,    ///< schematic: sub-sheet box with its fields and pins
     SCH_NOTE,     ///< schematic: text, graphic, image, no-connect flag or bus entry
+    SCH_SHEET_PIN, ///< schematic: sheet pin, index = sheets in order, pins in order
     COUNT
 };
 

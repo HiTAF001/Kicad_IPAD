@@ -1430,7 +1430,7 @@ private:
                 std::string value = resolve( f.value );
 
                 if( f.name == "Sheetfile" )
-                    value = Tr( "File: " ) + value;
+                    value = std::string( Tr( "File" ) ) + ": " + value;
                 else if( f.name != "Sheetname" && f.showName )
                     value = f.name + ": " + value;
 
@@ -1444,9 +1444,15 @@ private:
                 draw( L_SHEETS, S_TEXT, col, [&]( Acc& a )
                       { text( a, value, c, std::fabs( std::remainder( f.angle, 180.0 ) ) > 45 ? 90 : 0, f.attr, HAlign::CENTER, VAlign::CENTER, pen ); } );
             }
+        }
 
+        endType( ItemType::SCH_SHEET );
+
+        for( const SchSheet& sh : m_screen.sheets )
+        {
             for( const SchSheetPin& p : sh.pins )
             {
+                beginItem( ItemType::SCH_SHEET_PIN );
                 double     pen = textPen( p.attr );
                 double     h = p.attr.sizeY;
                 Color      col = pick( p.attr.color, C_SHEETLABEL );
@@ -1466,7 +1472,7 @@ private:
             }
         }
 
-        endType( ItemType::SCH_SHEET );
+        endType( ItemType::SCH_SHEET_PIN );
     }
 
     // ---- notes -------------------------------------------------------------------------

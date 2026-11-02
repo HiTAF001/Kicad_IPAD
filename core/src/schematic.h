@@ -131,6 +131,8 @@ struct LibSymbol
     std::vector<SchGraphic> graphics;
     std::vector<LibPin>     pins;
     std::map<int, std::string> unitNames;
+    bool        duplicatePinNumbersAreJumpers = false;
+    std::vector<std::vector<std::string>> jumperPinGroups; ///< pin numbers joined inside the part
 };
 
 /// Orientation of a placed symbol: screen = pos + M * symbolPoint (KiCad TRANSFORM).
@@ -285,6 +287,7 @@ struct SchScreen
     /// KiCad 6 root file: references per instance path (newer files store them in symbols).
     std::map<std::string, SymbolInstance> legacySymbolInstances; ///< key: full path incl. symbol
     std::map<std::string, std::string>    legacySheetPages;      ///< sheet path -> page
+    std::map<std::string, std::vector<std::string>> busAliases;  ///< (bus_alias) name -> members
 
     std::vector<std::string> warnings;
 };
@@ -301,12 +304,36 @@ struct SheetNode
     std::vector<int> children;
 };
 
+/// Connectivity of one sheet instance: net index per item (-1 = none).
+struct SheetNets
+{
+    std::vector<int> wire;     ///< per SchScreen::lines entry (graphic lines: -1)
+    std::vector<int> pin;      ///< per flat pin index (SchematicPinBase)
+    std::vector<int> label;    ///< per SchScreen::labels entry
+    std::vector<int> junction; ///< per SchScreen::junctions entry
+    std::vector<int> sheetPin; ///< per sheet pin, sheets in order, pins in order
+    std::vector<int> noConnect; ///< per SchScreen::noConnects entry
+    std::vector<int> busEntry; ///< per SchScreen::busEntries entry
+};
+
+struct SchNet
+{
+    std::string name;
+    bool        global = false;  ///< named by a global label or power symbol
+    bool        noConnect = false;
+    bool        bus = false;     ///< a bus (its members are nets of their own)
+    int         pinCount = 0;    ///< pins of real (not power) symbols
+};
+
 struct Schematic
 {
     std::vector<SchScreen> screens;
     std::vector<SheetNode> sheets; ///< sheets[0] = root
     std::vector<std::string> warnings;
     std::vector<std::string> missingFiles; ///< sub-sheet files that were not provided
+
+    std::vector<SchNet>    nets;     ///< filled by BuildSchematicNets
+    std::vector<SheetNets> sheetNets; ///< per sheets[] entry
 
     /// Reference shown for a symbol on a sheet (instance data, else the Reference field).
     std::string Reference( const SheetNode& aSheet, const SchSymbol& aSymbol ) const;
@@ -337,6 +364,21 @@ std::vector<std::string> SheetFileNames( const SchScreen& aScreen );
 
 /// Paper size in mm for a KiCad paper name ("A4", "USLetter", ...); false if unknown.
 bool PaperSize( const std::string& aName, double& aW, double& aH );
+
+/// Connect the whole hierarchy into nets (KiCad rules: wires, junctions, labels, power
+/// symbols, sheet pins and hierarchical labels, bus members through sheets) and name them.
+void BuildSchematicNets( Schematic& aSch );
+
+/// Members of a bus label: "D[0..3]" -> D0..D3, "SPI{SCK MOSI}" -> SPI.SCK, SPI.MOSI; a plain
+/// name gives itself.
+std::vector<std::string> BusMembers( const std::string& aLabel );
+
+/// Netlist as text, one net per line: "name<TAB>ref:pin ref:pin ..." (pins of symbols on the
+/// board, as in KiCad's netlist export; nets without such pins are left out).
+std::string SchematicNetlistText( const Schematic& aSch );
+
+/// "/" for the root, "/sub/" for a sub-sheet (KiCad's human readable sheet path).
+std::string SheetPathName( const Schematic& aSch, int aSheet );
 
 struct Mesh;
 

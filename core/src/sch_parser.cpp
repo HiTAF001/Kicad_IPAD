@@ -390,7 +390,22 @@ private:
                         m_s.legacySymbolInstances[in.path] = in;
                     } );
         }
-        // bus_alias, group, embedded_fonts, embedded_files, net chains: nothing to draw
+        else if( k == "bus_alias" )
+        {
+            std::vector<std::string> members;
+
+            if( N m = n.find( "members" ) )
+            {
+                for( N c = m.first().next(); c; c = c.next() )
+                {
+                    if( c.isAtom() )
+                        members.push_back( S( c.text() ) );
+                }
+            }
+
+            m_s.busAliases[S( n.str( 0 ) )] = members;
+        }
+        // group, embedded_fonts, embedded_files, net chains: nothing to draw
     }
 
     void paper( const N& n )
@@ -468,6 +483,26 @@ private:
             {
                 L.power = true;
                 L.localPower = c.str( 0 ) == "local";
+            }
+            else if( k == "duplicate_pin_numbers_are_jumpers" )
+            {
+                L.duplicatePinNumbersAreJumpers = c.size() < 2 || c.str( 0 ) == "yes";
+            }
+            else if( k == "jumper_pin_groups" )
+            {
+                for( N g = c.first().next(); g; g = g.next() )
+                {
+                    std::vector<std::string> group;
+
+                    for( N m = g.first(); g.isList() && m; m = m.next() )
+                    {
+                        if( m.isAtom() )
+                            group.push_back( S( m.text() ) );
+                    }
+
+                    if( group.size() > 1 )
+                        L.jumperPinGroups.push_back( std::move( group ) );
+                }
             }
             else if( k == "pin_names" )
             {
@@ -1379,6 +1414,9 @@ void LoadSchematic( Schematic& aSch, const std::vector<SchFile>& aFiles, size_t 
                 L.showPinNames = p->second.showPinNames;
                 L.showPinNumbers = p->second.showPinNumbers;
                 L.power = L.power || p->second.power;
+                L.localPower = L.localPower || p->second.localPower;
+                L.duplicatePinNumbersAreJumpers = p->second.duplicatePinNumbersAreJumpers;
+                L.jumperPinGroups = p->second.jumperPinGroups;
                 parent = p->second.extends;
             }
         }
@@ -1516,6 +1554,39 @@ void LoadSchematic( Schematic& aSch, const std::vector<SchFile>& aFiles, size_t 
 
     for( const std::string& m : aSch.missingFiles )
         aSch.warnings.push_back( TrF( "Sub-sheet file not available: {0}", { m } ) );
+
+    // Files before KiCad 8 named a power net after the hidden pin of the power symbol; KiCad
+    // takes that name over into the value when it reads them.
+    if( aSch.screens[0].version < 20230221 )
+    {
+        for( SchScreen& sc : aSch.screens )
+        {
+            for( SchSymbol& sym : sc.symbols )
+            {
+                const LibSymbol* lib = aSch.Lib( sc, sym );
+
+                if( !lib || !lib->power || lib->localPower || lib->pins.empty()
+                    || lib->pins[0].type != PinType::POWER_IN || lib->pins[0].visible )
+                    continue;
+
+                for( SchField& f : sym.fields )
+                {
+                    if( f.name == "Value" )
+                        f.value = lib->pins[0].name;
+                }
+
+                const std::string tail = "/" + sym.uuid;
+
+                for( auto& [path, inst] : aSch.screens[0].legacySymbolInstances )
+                {
+                    if( path.size() >= tail.size() && path.compare( path.size() - tail.size(), tail.size(), tail ) == 0 )
+                        inst.value = lib->pins[0].name;
+                }
+            }
+        }
+    }
+
+    BuildSchematicNets( aSch );
 }
 
 } // namespace kp

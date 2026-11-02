@@ -201,3 +201,68 @@ Not a Gerber or drill file: {0} ‖ Gerber ya da delik dosyası değil: {0} ‖ 
 No Gerber or drill files found ‖ Gerber ya da delik dosyası bulunamadı ‖ Keine Gerber- oder Bohrdateien gefunden ‖ Aucun fichier Gerber ou de perçage trouvé ‖ No se encontraron archivos Gerber ni de taladrado ‖ Nessun file Gerber o di foratura trovato ‖ Gerber- tai poraustiedostoja ei löytynyt ‖ Файлы Gerber или сверловки не найдены ‖ Gerber またはドリルファイルが見つかりません ‖ Gerber 또는 드릴 파일을 찾을 수 없습니다 ‖ 未找到 Gerber 或钻孔文件
 Drill hole (non-plated) ‖ Delik (metalize değil) ‖ Bohrung (nicht durchkontaktiert) ‖ Trou (non métallisé) ‖ Taladro (no metalizado) ‖ Foro (non metallizzato) ‖ Reikä (pinnoittamaton) ‖ Отверстие (неметаллизированное) ‖ 穴 (メッキなし) ‖ 홀 (비도금) ‖ 钻孔（非金属化）
 Drill hole (plated) ‖ Delik (metalize) ‖ Bohrung (durchkontaktiert) ‖ Trou (métallisé) ‖ Taladro (metalizado) ‖ Foro (metallizzato) ‖ Reikä (pinnoitettu) ‖ Отверстие (металлизированное) ‖ 穴 (メッキあり) ‖ 홀 (도금) ‖ 钻孔（金属化）
+# Schematic viewer (Phase 6)
+Bidirectional ‖ Çift yönlü ‖ Bidirektional ‖ Bidirectionnel ‖ Bidireccional ‖ Bidirezionale ‖ Kaksisuuntainen ‖ Двунаправленный ‖ 双方向 ‖ 양방향 ‖ 双向
+Bus ‖ Veriyolu ‖ Bus ‖ Bus ‖ Bus ‖ Bus ‖ Väylä ‖ Шина ‖ バス ‖ 버스 ‖ 总线
+Buses ‖ Veriyolları ‖ Busse ‖ Bus ‖ Buses ‖ Bus ‖ Väylät ‖ Шины ‖ バス ‖ 버스 ‖ 总线
+Bus entry ‖ Veriyolu girişi ‖ Buseinführung ‖ Entrée de bus ‖ Entrada de bus ‖ Ingresso bus ‖ Väylän liitäntä ‖ Вход шины ‖ バスエントリー ‖ 버스 엔트리 ‖ 总线入口
+Diamond ‖ Elmas ‖ Raute ‖ Losange ‖ Rombo ‖ Rombo ‖ Vinoneliö ‖ Ромб ‖ ひし形 ‖ 마름모 ‖ 菱形
+Directive label ‖ Yönerge etiketi ‖ Direktiven-Label ‖ Étiquette de directive ‖ Etiqueta de directiva ‖ Etichetta direttiva ‖ Direktiivinimiö ‖ Метка директивы ‖ ディレクティブラベル ‖ 지시 레이블 ‖ 指令标签
+Dot ‖ Nokta ‖ Punkt ‖ Point ‖ Punto ‖ Punto ‖ Piste ‖ Точка ‖ ドット ‖ 점 ‖ 圆点
+Drawing sheet ‖ Çizim sayfası ‖ Zeichnungsrahmen ‖ Cartouche ‖ Hoja de dibujo ‖ Foglio di disegno ‖ Piirustusarkki ‖ Рамка листа ‖ 図面枠 ‖ 도면 시트 ‖ 图框
+Electrical type ‖ Elektriksel tür ‖ Elektrischer Typ ‖ Type électrique ‖ Tipo eléctrico ‖ Tipo elettrico ‖ Sähköinen tyyppi ‖ Электрический тип ‖ 電気的タイプ ‖ 전기적 유형 ‖ 电气类型
+Excluded from simulation ‖ Simülasyon dışı ‖ Von der Simulation ausgeschlossen ‖ Exclu de la simulation ‖ Excluido de la simulación ‖ Escluso dalla simulazione ‖ Ei simulaatiossa ‖ Исключён из моделирования ‖ シミュレーション対象外 ‖ 시뮬레이션 제외 ‖ 不参与仿真
+File ‖ Dosya ‖ Datei ‖ Fichier ‖ Archivo ‖ File ‖ Tiedosto ‖ Файл ‖ ファイル ‖ 파일 ‖ 文件
+File not available ‖ Dosya yok ‖ Datei nicht verfügbar ‖ Fichier non disponible ‖ Archivo no disponible ‖ File non disponibile ‖ Tiedostoa ei ole saatavilla ‖ Файл недоступен ‖ ファイルがありません ‖ 파일 없음 ‖ 文件不可用
+Free ‖ Serbest ‖ Frei ‖ Libre ‖ Libre ‖ Libero ‖ Vapaa ‖ Свободный ‖ フリー ‖ 자유 ‖ 自由
+Global ‖ Genel ‖ Global ‖ Global ‖ Global ‖ Globale ‖ Globaali ‖ Глобальная ‖ グローバル ‖ 글로벌 ‖ 全局
+Global label ‖ Genel etiket ‖ Globales Label ‖ Étiquette globale ‖ Etiqueta global ‖ Etichetta globale ‖ Globaali nimiö ‖ Глобальная метка ‖ グローバルラベル ‖ 글로벌 레이블 ‖ 全局标签
+Graphic ‖ Çizim ‖ Grafik ‖ Graphique ‖ Gráfico ‖ Grafica ‖ Grafiikka ‖ Графика ‖ 図形 ‖ 그래픽 ‖ 图形
+Graphic line ‖ Çizim çizgisi ‖ Grafiklinie ‖ Ligne graphique ‖ Línea gráfica ‖ Linea grafica ‖ Grafiikkaviiva ‖ Графическая линия ‖ 図形ライン ‖ 그래픽 선 ‖ 图形线
+Hierarchical label ‖ Hiyerarşik etiket ‖ Hierarchisches Label ‖ Étiquette hiérarchique ‖ Etiqueta jerárquica ‖ Etichetta gerarchica ‖ Hierarkkinen nimiö ‖ Иерархическая метка ‖ 階層ラベル ‖ 계층 레이블 ‖ 层次标签
+Image ‖ Görüntü ‖ Bild ‖ Image ‖ Imagen ‖ Immagine ‖ Kuva ‖ Изображение ‖ 画像 ‖ 이미지 ‖ 图像
+Input ‖ Giriş ‖ Eingang ‖ Entrée ‖ Entrada ‖ Ingresso ‖ Tulo ‖ Вход ‖ 入力 ‖ 입력 ‖ 输入
+Junction ‖ Bağlantı noktası ‖ Verbindungspunkt ‖ Jonction ‖ Unión ‖ Giunzione ‖ Liitoskohta ‖ Узел ‖ ジャンクション ‖ 접합점 ‖ 节点
+Label ‖ Etiket ‖ Label ‖ Étiquette ‖ Etiqueta ‖ Etichetta ‖ Nimiö ‖ Метка ‖ ラベル ‖ 레이블 ‖ 标签
+Labels ‖ Etiketler ‖ Labels ‖ Étiquettes ‖ Etiquetas ‖ Etichette ‖ Nimiöt ‖ Метки ‖ ラベル ‖ 레이블 ‖ 标签
+Members ‖ Üyeler ‖ Mitglieder ‖ Membres ‖ Miembros ‖ Membri ‖ Jäsenet ‖ Элементы ‖ メンバー ‖ 멤버 ‖ 成员
+Name ‖ Ad ‖ Name ‖ Nom ‖ Nombre ‖ Nome ‖ Nimi ‖ Имя ‖ 名前 ‖ 이름 ‖ 名称
+No schematic file ‖ Şema dosyası yok ‖ Keine Schaltplandatei ‖ Aucun fichier de schéma ‖ No hay archivo de esquema ‖ Nessun file di schema ‖ Ei piirikaaviotiedostoa ‖ Нет файла схемы ‖ 回路図ファイルがありません ‖ 회로도 파일 없음 ‖ 没有原理图文件
+No-connect flag ‖ Bağlantısız işareti ‖ Nicht-verbunden-Markierung ‖ Indicateur de non-connexion ‖ Indicador de no conexión ‖ Indicatore di non connessione ‖ Kytkemätön-merkki ‖ Флаг неподключения ‖ 未接続フラグ ‖ 미연결 플래그 ‖ 不连接标志
+Not a KiCad schematic file ‖ KiCad şema dosyası değil ‖ Keine KiCad-Schaltplandatei ‖ Ce n'est pas un fichier de schéma KiCad ‖ No es un archivo de esquema de KiCad ‖ Non è un file di schema KiCad ‖ Ei KiCad-piirikaaviotiedosto ‖ Это не файл схемы KiCad ‖ KiCad の回路図ファイルではありません ‖ KiCad 회로도 파일이 아닙니다 ‖ 不是 KiCad 原理图文件
+Not a schematic ‖ Şema değil ‖ Kein Schaltplan ‖ Ce n'est pas un schéma ‖ No es un esquema ‖ Non è uno schema ‖ Ei piirikaavio ‖ Это не схема ‖ 回路図ではありません ‖ 회로도가 아닙니다 ‖ 不是原理图
+Not connected ‖ Bağlantısız ‖ Nicht verbunden ‖ Non connecté ‖ No conectado ‖ Non connesso ‖ Kytkemätön ‖ Не подключён ‖ 未接続 ‖ 연결 안 됨 ‖ 未连接
+Not on board ‖ Kartta yok ‖ Nicht auf der Platine ‖ Absent du circuit imprimé ‖ No está en la placa ‖ Non sul circuito stampato ‖ Ei piirilevyllä ‖ Не на плате ‖ 基板に含めない ‖ 보드에 없음 ‖ 不在 PCB 上
+Notes and graphics ‖ Notlar ve çizimler ‖ Notizen und Grafiken ‖ Notes et graphiques ‖ Notas y gráficos ‖ Note e grafica ‖ Huomautukset ja grafiikka ‖ Примечания и графика ‖ 注記と図形 ‖ 메모 및 그래픽 ‖ 注释和图形
+Number ‖ Numara ‖ Nummer ‖ Numéro ‖ Número ‖ Numero ‖ Numero ‖ Номер ‖ 番号 ‖ 번호 ‖ 编号
+Open collector ‖ Açık kolektör ‖ Open Collector ‖ Collecteur ouvert ‖ Colector abierto ‖ Collettore aperto ‖ Avoin kollektori ‖ Открытый коллектор ‖ オープンコレクタ ‖ 오픈 컬렉터 ‖ 集电极开路
+Open emitter ‖ Açık emetör ‖ Open Emitter ‖ Émetteur ouvert ‖ Emisor abierto ‖ Emettitore aperto ‖ Avoin emitteri ‖ Открытый эмиттер ‖ オープンエミッタ ‖ 오픈 이미터 ‖ 发射极开路
+Output ‖ Çıkış ‖ Ausgang ‖ Sortie ‖ Salida ‖ Uscita ‖ Lähtö ‖ Выход ‖ 出力 ‖ 출력 ‖ 输出
+Page ‖ Sayfa ‖ Seite ‖ Page ‖ Página ‖ Pagina ‖ Sivu ‖ Страница ‖ ページ ‖ 페이지 ‖ 页
+Passive ‖ Pasif ‖ Passiv ‖ Passif ‖ Pasivo ‖ Passivo ‖ Passiivinen ‖ Пассивный ‖ パッシブ ‖ 패시브 ‖ 无源
+Pin names and numbers ‖ Pin adları ve numaraları ‖ Pinnamen und -nummern ‖ Noms et numéros des broches ‖ Nombres y números de pines ‖ Nomi e numeri dei pin ‖ Nastojen nimet ja numerot ‖ Имена и номера выводов ‖ ピン名と番号 ‖ 핀 이름 및 번호 ‖ 引脚名称和编号
+Pin {0} ‖ Pin {0} ‖ Pin {0} ‖ Broche {0} ‖ Pin {0} ‖ Pin {0} ‖ Nasta {0} ‖ Вывод {0} ‖ ピン {0} ‖ 핀 {0} ‖ 引脚 {0}
+Pins ‖ Pinler ‖ Pins ‖ Broches ‖ Pines ‖ Pin ‖ Nastat ‖ Выводы ‖ ピン ‖ 핀 ‖ 引脚
+Power input ‖ Güç girişi ‖ Spannungseingang ‖ Entrée d'alimentation ‖ Entrada de alimentación ‖ Ingresso alimentazione ‖ Tehotulo ‖ Вход питания ‖ 電源入力 ‖ 전원 입력 ‖ 电源输入
+Power output ‖ Güç çıkışı ‖ Spannungsausgang ‖ Sortie d'alimentation ‖ Salida de alimentación ‖ Uscita alimentazione ‖ Tehon lähtö ‖ Выход питания ‖ 電源出力 ‖ 전원 출력 ‖ 电源输出
+Power symbol ‖ Güç sembolü ‖ Versorgungssymbol ‖ Symbole d'alimentation ‖ Símbolo de alimentación ‖ Simbolo di alimentazione ‖ Tehosymboli ‖ Символ питания ‖ 電源シンボル ‖ 전원 심볼 ‖ 电源符号
+Round ‖ Yuvarlak ‖ Rund ‖ Rond ‖ Redondo ‖ Tondo ‖ Pyöreä ‖ Круглая ‖ 丸 ‖ 원형 ‖ 圆形
+Scope ‖ Kapsam ‖ Geltungsbereich ‖ Portée ‖ Alcance ‖ Ambito ‖ Laajuus ‖ Область ‖ スコープ ‖ 범위 ‖ 范围
+Sheet ‖ Sayfa ‖ Blatt ‖ Feuille ‖ Hoja ‖ Foglio ‖ Arkki ‖ Лист ‖ シート ‖ 시트 ‖ 图纸
+Sheet pin {0} ‖ Sayfa pini {0} ‖ Blatt-Pin {0} ‖ Broche de feuille {0} ‖ Pin de hoja {0} ‖ Pin del foglio {0} ‖ Arkin nasta {0} ‖ Вывод листа {0} ‖ シートピン {0} ‖ 시트 핀 {0} ‖ 图纸引脚 {0}
+Sheet {0} includes itself ‖ {0} sayfası kendini içeriyor ‖ Blatt {0} enthält sich selbst ‖ La feuille {0} s'inclut elle-même ‖ La hoja {0} se incluye a sí misma ‖ Il foglio {0} include se stesso ‖ Arkki {0} sisältää itsensä ‖ Лист {0} включает сам себя ‖ シート {0} が自分自身を含んでいます ‖ 시트 {0}이(가) 자기 자신을 포함합니다 ‖ 图纸 {0} 包含自身
+Sheets ‖ Sayfalar ‖ Blätter ‖ Feuilles ‖ Hojas ‖ Fogli ‖ Arkit ‖ Листы ‖ シート ‖ 시트 ‖ 图纸
+Status ‖ Durum ‖ Status ‖ État ‖ Estado ‖ Stato ‖ Tila ‖ Состояние ‖ 状態 ‖ 상태 ‖ 状态
+Sub-sheet file not available: {0} ‖ Alt sayfa dosyası yok: {0} ‖ Datei des Unterblatts nicht verfügbar: {0} ‖ Fichier de sous-feuille non disponible : {0} ‖ Archivo de subhoja no disponible: {0} ‖ File del sottofoglio non disponibile: {0} ‖ Aliarkin tiedostoa ei ole saatavilla: {0} ‖ Файл вложенного листа недоступен: {0} ‖ サブシートのファイルがありません: {0} ‖ 하위 시트 파일 없음: {0} ‖ 子图纸文件不可用：{0}
+Symbol ‖ Sembol ‖ Symbol ‖ Symbole ‖ Símbolo ‖ Simbolo ‖ Symboli ‖ Символ ‖ シンボル ‖ 심볼 ‖ 符号
+Symbol fields ‖ Sembol alanları ‖ Symbolfelder ‖ Champs des symboles ‖ Campos de símbolo ‖ Campi del simbolo ‖ Symbolin kentät ‖ Поля символов ‖ シンボルフィールド ‖ 심볼 필드 ‖ 符号字段
+Symbols ‖ Semboller ‖ Symbole ‖ Symboles ‖ Símbolos ‖ Simboli ‖ Symbolit ‖ Символы ‖ シンボル ‖ 심볼 ‖ 符号
+Text box ‖ Metin kutusu ‖ Textfeld ‖ Zone de texte ‖ Cuadro de texto ‖ Casella di testo ‖ Tekstilaatikko ‖ Текстовое поле ‖ テキストボックス ‖ 텍스트 상자 ‖ 文本框
+Tri-state ‖ Üç durumlu ‖ Tri-State ‖ Trois états ‖ Triestado ‖ Tri-state ‖ Kolmitila ‖ Три состояния ‖ トライステート ‖ 트라이스테이트 ‖ 三态
+Unit ‖ Birim ‖ Einheit ‖ Unité ‖ Unidad ‖ Unità ‖ Yksikkö ‖ Секция ‖ ユニット ‖ 유닛 ‖ 单元
+Unknown paper size {0} ‖ Bilinmeyen kâğıt boyutu {0} ‖ Unbekanntes Papierformat {0} ‖ Format de papier inconnu {0} ‖ Tamaño de papel desconocido {0} ‖ Formato carta sconosciuto {0} ‖ Tuntematon paperikoko {0} ‖ Неизвестный размер листа {0} ‖ 不明な用紙サイズ {0} ‖ 알 수 없는 용지 크기 {0} ‖ 未知纸张尺寸 {0}
+Unspecified ‖ Belirtilmemiş ‖ Nicht spezifiziert ‖ Non spécifié ‖ No especificado ‖ Non specificato ‖ Määrittämätön ‖ Не указан ‖ 未指定 ‖ 지정되지 않음 ‖ 未指定
+Wire ‖ Tel ‖ Leitung ‖ Fil ‖ Cable ‖ Filo ‖ Johdin ‖ Провод ‖ ワイヤー ‖ 와이어 ‖ 导线
+Wires ‖ Teller ‖ Leitungen ‖ Fils ‖ Cables ‖ Fili ‖ Johtimet ‖ Провода ‖ ワイヤー ‖ 와이어 ‖ 导线
+{0} could not be read: {1} ‖ {0} okunamadı: {1} ‖ {0} konnte nicht gelesen werden: {1} ‖ Impossible de lire {0} : {1} ‖ No se pudo leer {0}: {1} ‖ Impossibile leggere {0}: {1} ‖ Tiedostoa {0} ei voitu lukea: {1} ‖ Не удалось прочитать {0}: {1} ‖ {0} を読み込めませんでした: {1} ‖ {0}을(를) 읽을 수 없습니다: {1} ‖ 无法读取 {0}：{1}
+{0} of {1} ‖ {0} / {1} ‖ {0} von {1} ‖ {0} sur {1} ‖ {0} de {1} ‖ {0} di {1} ‖ {0} / {1} ‖ {0} из {1} ‖ {0} / {1} ‖ {0} / {1} ‖ {0} / {1}

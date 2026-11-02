@@ -221,9 +221,87 @@ static int cmdStats( const char* aPath )
 
 static void printItem( kp_board* b, const kp_item& it )
 {
-    static const char* names[] = { "none", "pad", "via", "track", "arc", "footprint", "zone", "shape", "text" };
-    printf( "-- %s #%d (net %d, fp %d, layer %d)\n", names[it.type], it.index, it.net, it.footprint, it.layer );
+    static const char* names[] = { "none",       "pad",          "via",          "track",     "arc",
+                                   "footprint",  "zone",         "shape",        "text",      "sch-symbol",
+                                   "sch-pin",    "sch-wire",     "sch-junction", "sch-label", "sch-sheet",
+                                   "sch-note",   "sch-sheet-pin" };
+    const char* name = it.type >= 0 && it.type < (int) ( sizeof( names ) / sizeof( names[0] ) ) ? names[it.type] : "?";
+    printf( "-- %s #%d (net %d, fp %d, layer %d)\n", name, it.index, it.net, it.footprint, it.layer );
     printf( "%s\n", kp_board_item_info( b, &it ) );
+}
+
+
+/// Pick at a grid of points on every sheet (or the board) and describe what is hit: a
+/// robustness sweep for the pick / info / highlight code.
+static int cmdPickSweep( const char* aPath, int aSteps )
+{
+    kp_board* root = load( aPath );
+
+    if( !root )
+        return 1;
+
+    const int sheets = std::max( 1, (int) kp_sch_sheet_count( root ) );
+    long      hits = 0, infos = 0, ranges = 0;
+
+    for( int s = 0; s < sheets; ++s )
+    {
+        char      err[256] = "";
+        kp_board* b = kp_sch_sheet_count( root ) ? kp_board_sch_open_sheet( root, s, err, sizeof( err ) ) : root;
+
+        if( !b )
+            continue;
+
+        double x0, y0, x1, y1;
+        kp_board_bounds( b, &x0, &y0, &x1, &y1 );
+
+        for( int i = 0; i <= aSteps; ++i )
+        {
+            for( int j = 0; j <= aSteps; ++j )
+            {
+                double  x = x0 + ( x1 - x0 ) * i / aSteps, y = y0 + ( y1 - y0 ) * j / aSteps;
+                kp_item items[8];
+                int     n = kp_board_pick( b, x, y, 1.0, nullptr, 0, 0, 0, items, 8 );
+                hits += n;
+
+                for( int k = 0; k < n; ++k )
+                {
+                    infos += strlen( kp_board_item_info( b, &items[k] ) ) > 0;
+                    ranges += kp_board_item_ranges( b, &items[k], 0, nullptr, 0 );
+                    double a, c, d, e;
+                    kp_board_item_bounds( b, &items[k], 0, &a, &c, &d, &e );
+
+                    if( items[k].net > 0 )
+                    {
+                        ranges += kp_board_item_ranges( b, &items[k], 1, nullptr, 0 );
+                        kp_board_item_bounds( b, &items[k], 1, &a, &c, &d, &e );
+                        infos += strlen( kp_board_net_info( b, items[k].net ) ) > 0;
+                        int32_t sh[4];
+                        kp_sch_net_sheets( b, items[k].net, sh, 4 );
+                    }
+                }
+            }
+        }
+
+        for( int f = 0; f < kp_board_footprint_count( b ); ++f )
+        {
+            double x, y, a;
+            infos += kp_board_footprint_pose( b, f, &x, &y, &a ) && kp_board_footprint_ref( b, f )[0];
+        }
+
+        if( b != root )
+            kp_board_free( b );
+    }
+
+    for( int i = 0; i < kp_sch_symbol_count( root ); ++i )
+    {
+        int32_t     sheet, index;
+        const char *ref, *value;
+        kp_sch_symbol_entry( root, i, &sheet, &index, &ref, &value );
+    }
+
+    printf( "%d sheet(s): %ld hits, %ld descriptions, %ld highlight ranges\n", sheets, hits, infos, ranges );
+    kp_board_free( root );
+    return 0;
 }
 
 
@@ -1086,6 +1164,21 @@ int main( int argc, char** argv )
     if( argc >= 3 && !strcmp( argv[1], "sheets" ) )
         return cmdSheets( argv[2] );
 
+    if( argc >= 3 && !strcmp( argv[1], "picksweep" ) )
+        return cmdPickSweep( argv[2], argc >= 4 ? atoi( argv[3] ) : 60 );
+
+    if( argc >= 3 && !strcmp( argv[1], "netlist" ) )
+    {
+        kp_board* b = load( argv[2] );
+
+        if( !b )
+            return 1;
+
+        fputs( kp_sch_netlist( b ), stdout );
+        kp_board_free( b );
+        return 0;
+    }
+
     if( argc >= 3 && !strcmp( argv[1], "stats" ) )
         return cmdStats( argv[2] );
 
@@ -1098,7 +1191,7 @@ int main( int argc, char** argv )
     if( argc >= 3 && !strcmp( argv[1], "check" ) )
         return cmdCheck( argc - 2, argv + 2 );
 
-    fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli check <files...>\n  kpcli pick <file> <x> <y> [tol]\n"
+    fprintf( stderr, "usage:\n  kpcli stats <file>\n  kpcli sheets <file.kicad_sch>\n  kpcli netlist <file.kicad_sch>\n  kpcli check <files...>\n  kpcli pick <file> <x> <y> [tol]\n"
                      "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n"
                      "  kpcli edit <in> <out> ops... (move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |\n"
                      "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | track X1 Y1 X2 Y2 W LAYER NET |\n"

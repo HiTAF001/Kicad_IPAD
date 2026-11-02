@@ -26,6 +26,8 @@ add_library( kpcore STATIC
     core/src/gerber.cpp
     core/src/sch_parser.cpp
     core/src/sch_mesh.cpp
+    core/src/sch_connectivity.cpp
+    core/src/sch_pick.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
 )
