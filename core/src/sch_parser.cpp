@@ -1054,7 +1054,8 @@ private:
     static std::string decodeBase64( const std::string& in )
     {
         std::string out;
-        int         val = 0, bits = -8;
+        uint32_t    val = 0;
+        int         bits = -8;
 
         for( char ch : in )
         {
@@ -1073,7 +1074,7 @@ private:
             else
                 continue;
 
-            val = ( val << 6 ) | d;
+            val = ( ( val << 6 ) | (uint32_t) d ) & 0xFFFFFF; // only the last 24 bits matter
             bits += 6;
 
             if( bits >= 0 )
