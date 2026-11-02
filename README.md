@@ -7,10 +7,11 @@
 Netloom, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan ve düzenleyen, yerel (native) bir uygulamadır.
 Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşınabilir C++17 ile yazıldı.
 
-> Durum: **Faz 1–4: görüntüleyici, inceleme araçları ve temel düzenleme.** Kartı açar, KiCad
-> renkleri ve yazı tipiyle çizer; seçim, net vurgulama, arama, ölçüm, pad/net etiketleri var.
-> Faz 4 ile footprint taşıma/döndürme, silme, referans/değer, pist genişliği, via boyutu,
-> geri al/yinele, kaydetme ve ratsnest geldi. Pist çizme, DRC ve şematik sonraki fazlarda.
+> Durum: **Faz 1–5: görüntüleyici, inceleme, düzenleme, Apple Pencil ile pist çizme, tasarım
+> kontrolü (DRC), üretim dosyaları ve Gerber görüntüleyici.** Kartı açar, KiCad renkleri ve yazı
+> tipiyle çizer; seçim, net vurgulama, arama, ölçüm, düzenleme, kayıpsız kaydetme, ratsnest var.
+> Faz 5 ile kalemle pist/via çizme, KiCad kurallarıyla DRC, Gerber/Excellon/BOM/dizgi dosyaları
+> ve başka programların Gerber'lerini açma geldi. Şematik sonraki fazlarda.
 
 | Üstten | Alttan görünüm | Katman paneli |
 |---|---|---|
@@ -19,6 +20,8 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/6-select-footprint.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/7-net-highlight.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/9-labels.png) |
 | **Düzenleme (döndürülmüş footprint + ratsnest)** | **Referans / değer** | **Ölçüm** |
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/11-edit-rotate.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/12-edit-fields.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/8-measure.png) |
+| **Kalemle pist çizme** | **Tasarım kontrolü (DRC)** | **Gerber görüntüleyici** |
+| ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/16-route.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/19-turkish-drc.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/20-gerber.png) |
 
 *Ekran görüntüleri her derlemede CI tarafından iPad simülatöründe çekilir (`ci-screenshots` dalı).*
 
@@ -54,6 +57,24 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
   - kilitli öğeler düzenlenmez (KiCad'deki gibi)
 - **Ratsnest:** bağlanmamış pad'ler arasında ince çizgiler; her düzenlemeden sonra yeniden
   hesaplanır. Kart bilgisinde eksik bağlantı sayısı görünür.
+- **Pist ve via çizme (Faz 5):** Apple Pencil ile (istersen parmakla) bir pad, via veya pist
+  ucundan çiz; titrek çizgi temiz 45° piste dönüşür ve bakıra tutunur. Katman, genişlik ve via
+  ölçüsü çizim çubuğundan seçilir; başka katmandaki bir pist veya pad'de bitirmek otomatik via
+  ekler. İki neti birleştirecek ya da başka bakıra değecek pist eklenmez, kırmızı halkalar nedenini
+  gösterir.
+- **Tasarım kontrolü (DRC):** açıklık, kısa devre, kesişen pistler, delik açıklığı, kart kenarı,
+  pist/via/halka/delik ölçüleri, delik-delik mesafesi, courtyard çakışması, bağlanmamış öğeler,
+  sarkan pist/via, bozuk kart kenarı. Kurallar KiCad proje dosyasından (`.kicad_pro`) okunur:
+  net sınıfları, kural önem dereceleri, KiCad 5–10 biçimleri. Bulgulara dokunmak kartta o yere
+  götürür.
+- **Üretim dosyaları (ücretsiz):** Gerber X2 (bakır, maske, pasta, serigrafi, kart kenarı),
+  Excellon delik dosyaları (PTH/NPTH, oval delikler), malzeme listesi (BOM, CSV) ve dizgi dosyası
+  (CPL); hepsi tek ZIP'te, her üreticinin kabul ettiği biçimde.
+- **Gerber görüntüleyici:** herhangi bir CAD programının Gerber ve delik dosyalarını aç (hepsini
+  birden seç, klasörünü ya da ZIP'ini) ve sipariş vermeden önce katman katman incele. Katmanlar
+  X2 bilgisinden, KiCad / Altium (Protel) / Eagle dosya adlarından bulunur. Aperture makroları,
+  delikli aperture'lar, termal, bölgeler, yaylar, step-repeat, "clear" polarite ve negatif
+  görüntü desteklenir. Bu kartlar yalnız görüntülenir.
 - **11 dil:** Türkçe, İngilizce, Almanca, Fransızca, İspanyolca, İtalyanca, Fince, Rusça, Japonca,
   Korece, Çince (basitleştirilmiş). Uygulama cihazın diline göre açılır; listede olmayan dillerde
   İngilizce başlar. Bilgi kartındaki öğe açıklamaları ve hata mesajları da çevrilidir.
@@ -102,12 +123,18 @@ Düzenleme için sağ üstteki kalem simgesine dokun. Düzenleme modunda bir pad
 footprint'ini seçer. Üstteki çubukta geri al / yinele, döndür, sil, seçime göre referans/değer,
 pist genişliği veya via, ızgara ve kaydet düğmeleri var.
 
+Pist çizmek için düzenleme çubuğundaki kalem ucu düğmesine dokun. Apple Pencil çizer, parmaklar
+kartı kaydırır; kalem yoksa tek parmak çizer, iki parmak kaydırır. Çizgiyi bırakınca pist yerine
+oturur; geri al ile kaldırılır. Kalkan simgesi tasarım kontrolünü, kutu simgesi üretim
+dosyalarını açar.
+
 > Bakır bölge dolguları yeniden hesaplanmaz (KiCad'de de dolgu elle yenilenir). Taşıdığın
 > footprint bir bölgenin içindeyse dosyayı KiCad'de açıp dolguyu yenile (**B**). Örnek kartlar
 > uygulama paketinin içinde olduğu için yalnız "Farklı kaydet" ile saklanabilir.
 
 Dosyayı **Aç** düğmesiyle (Dosyalar, iCloud Drive, OneDrive, AirDrop ile gelenler) seçebilir ya da
 Dosyalar uygulamasında bir `.kicad_pcb` dosyasını paylaş menüsünden Netloom'a gönderebilirsin.
+Gerber setleri için aynı düğmeyle dosyaların hepsini birden, klasörlerini ya da ZIP'lerini seç.
 
 ## Mimari
 
@@ -124,6 +151,12 @@ core/            Taşınabilir C++17 çekirdek (iOS, Linux, Windows, macOS'ta de
   src/edit.*         Düzenlemeler (taşı, döndür, sil, alan, pist genişliği, via) — yalnız ilgili
                      düğümlerin baytlarını değiştirir
   src/connectivity.* Bakır bağlantı analizi (pad/via/pist/bölge) ve ratsnest (MST)
+  src/geom.*         Bakır şekilleri, mesafe hesapları, katman başına ızgara dizini
+  src/route.*        Kalem çizgisi → 45° pist ve via (sadeleştirme, yön kuantalama, tutunma,
+                     kısa devre ve açıklık kontrolü)
+  src/drc.*          Tasarım kontrolü (KiCad'in kural anlamlarıyla), .kicad_pro kuralları
+  src/fab.*          Gerber X2, Excellon, BOM, dizgi dosyası, ZIP
+  src/gerber.*       Gerber / Excellon / ZIP okuyucu → yalnız görüntülenen kart
   include/kpcore.h   Swift'in kullandığı düz C arayüzü
 App/             SwiftUI arayüz + Metal çizici
 tools/kpcli.cpp  Masaüstü test aracı: istatistik, PNG çıktı (Metal çiziciyi taklit eder)
@@ -133,7 +166,8 @@ project.yml      XcodeGen proje tanımı (Xcode projesi CI'da üretilir)
 
 Çizim: her grup tek renkli üçgenlerden oluşur. Katmanlar arkadan öne çizilir; bir katman içinde
 stencil testi her pikselin bir kez boyanmasını sağlar, bu yüzden yarı saydam katmanlar (maske,
-pasta) KiCad'deki gibi görünür.
+pasta) KiCad'deki gibi görünür. Gerber'deki "clear" polarite de aynı stencil ile çizilir: katmanın
+şekilleri sondan başa doğru verilir, silen şekiller tamamen saydam renkle pikselleri sahiplenir.
 
 ### Çekirdeği bilgisayarda test etmek
 
@@ -147,6 +181,9 @@ cmake --build build
 ./build/kpcli render samples/pic_programmer.kicad_pcb net.png 1600 --pick 110.49 78.867 --net
 ./build/kpcli edit samples/pic_programmer.kicad_pcb out.kicad_pcb move C1 2.54 0 rotate C2 90 \
       field C1 Value 470uF delete P101 undo                                  # düzenle, kaydet, yeniden aç
+./build/kpcli drc samples/pic_programmer.kicad_pcb                           # tasarım kontrolü
+./build/kpcli fab samples/pic_programmer.kicad_pcb out/                      # Gerber, delik, BOM, CPL, ZIP
+./build/kpcli render out/ gerber.png 1600                                    # Gerber klasörü, ZIP veya tek dosya
 ctest --test-dir build
 ```
 
@@ -162,6 +199,17 @@ Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
   dosya, aynı işlemlerin KiCad API'siyle yapılmış haliyle karşılaştırıldı (footprint konumu ve açısı,
   her pad'in konumu ve açısı, referans/değer yazılarının konumu ve açısı): 0 fark.
 - Tüm düzenlemeler geri alınınca dosya orijinaliyle bayt bayt aynı (ctest).
+- **DRC:** KiCad 7'nin DRC'siyle 274 geometrik ihlal çiftinin 267'si birebir aynı; kalan farklar
+  belgelenmiş durumlar (`.kicad_dru` özel kuralları henüz yok, KiCad 7 ile güncel KiCad arasındaki
+  davranış farkları).
+- **Üretim dosyaları:** bakır, maske, pasta, kart kenarı ve delik dosyaları `kicad-cli`'nin
+  çıktısıyla piksel piksel karşılaştırıldı (gerbv ile rasterleştirilerek): aynı; maskede küçük
+  yaklaşıklık, serigrafide yalnız yazı tipi glif farkı. Dizgi dosyası 305 elemanda aynı.
+- **Gerber okuyucu:** KiCad'in kendi Gerber'leri (X2, X2'siz, 4.5/4.6 hassasiyet, makrolu/makrosuz,
+  Protel uzantıları; mm/inç, LZ/TZ/ondalık delik dosyaları) okunup yeniden yazıldı ve orijinaliyle
+  karşılaştırıldı: serigrafi, kenar ve delikler birebir, bakır/maske/pasta yalnız tek piksellik
+  kenar farkı. gerbv'nin örnek dosyaları (Altium, Eagle, Mentor, OrCAD, gEDA) da aynı yolla
+  denendi.
 
 ### Çeviriler
 
@@ -186,7 +234,7 @@ open Netloom.xcodeproj
 
 - ~~Faz 3: eleman seçme ve bilgi, net vurgulama, arama, ölçüm aracı, pad/net adları~~ ✓
 - ~~Faz 4: düzenleme ve kaydetme (taşıma, döndürme, silme, alanlar, ratsnest)~~ ✓
-- Faz 5: pist ve via çizme (dokunmatik için), temel DRC (açıklık, kısa devre)
+- ~~Faz 5: kalemle pist ve via çizme, DRC, üretim dosyaları (Gerber/Excellon/BOM/CPL), Gerber görüntüleyici~~ ✓
 - Faz 6: şematik görüntüleyici (`.kicad_sch`)
 - Faz 7: şematik düzenleme ve PCB'ye aktarma (netlist güncelleme)
 - Faz 8: sıfırdan proje: kart kenarı, footprint kütüphanesi, yerleştirme
