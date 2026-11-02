@@ -10,6 +10,11 @@ pull request (see .github/workflows/translations.yml).
 usage: DEEPSEEK_API_KEY=... tools/i18n/deepseek_review.py [--model deepseek-v4-pro]
                                                            [--languages tr,de] [--report out.md]
                                                            [--dry-run]
+
+Any OpenAI-compatible gateway works too, e.g. a local OmniRoute (PowerShell):
+    $env:OMNIROUTE_API_KEY = "<key from the OmniRoute dashboard>"
+    python tools\i18n\deepseek_review.py --base-url http://localhost:20128/v1 `
+        --key-env OMNIROUTE_API_KEY --model <DeepSeek model id from /v1/models>
 """
 import argparse
 import json
@@ -26,7 +31,7 @@ NAMES = {'tr': 'Turkish', 'de': 'German', 'fr': 'French', 'es': 'Spanish', 'it':
          'ru': 'Russian', 'ja': 'Japanese', 'ko': 'Korean', 'zh-Hans': 'Simplified Chinese'}
 SEP = ' ‖ '
 BATCH = 50
-URL = 'https://api.deepseek.com/chat/completions'
+DEEPSEEK_URL = 'https://api.deepseek.com'
 
 SYSTEM = """You review the translations of Netloom, an iPad app for viewing and editing printed circuit
 boards and schematics (KiCad files): layers, footprints, pads, vias, tracks, copper zones, nets,
@@ -77,7 +82,7 @@ def placeholders(s):
     return sorted(re.findall(r'%lld|%@|\{\d\}', s))
 
 
-def ask(key, model, lang, items):
+def ask(url, key, model, lang, items):
     payload = {
         'model': model,
         'messages': [
@@ -92,16 +97,22 @@ def ask(key, model, lang, items):
     body = json.dumps(payload).encode('utf-8')
 
     for attempt in range(5):
-        req = urllib.request.Request(URL, data=body, headers={
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + key,
-        })
+        headers = {'Content-Type': 'application/json'}
+
+        if key:
+            headers['Authorization'] = 'Bearer ' + key
+
+        req = urllib.request.Request(url, data=body, headers=headers)
 
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
                 data = json.load(r)
 
             content = (data['choices'][0]['message'].get('content') or '').strip()
+
+            # some gateways wrap the json in a code fence
+            if content.startswith('```'):
+                content = re.sub(r'^```[a-z]*\s*|\s*```$', '', content)
 
             if content:
                 return json.loads(content).get('items', [])
@@ -112,13 +123,13 @@ def ask(key, model, lang, items):
             print('  HTTP %d: %s' % (e.code, text), file=sys.stderr)
 
             if e.code in (400, 401, 402, 403, 404):
-                raise SystemExit('DeepSeek refused the request (HTTP %d): %s' % (e.code, text))
+                raise SystemExit('The model service refused the request (HTTP %d): %s' % (e.code, text))
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError) as e:
             print('  %s, retrying' % e, file=sys.stderr)
 
         time.sleep(5 * (attempt + 1))
 
-    raise SystemExit('DeepSeek did not answer after several attempts')
+    raise SystemExit('The model service did not answer after several attempts')
 
 
 def main():
@@ -127,11 +138,15 @@ def main():
     ap.add_argument('--languages', default='')
     ap.add_argument('--report', default='')
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--base-url', default=DEEPSEEK_URL,
+                    help='OpenAI-compatible API root (DeepSeek by default, e.g. http://localhost:20128/v1 for OmniRoute)')
+    ap.add_argument('--key-env', default='DEEPSEEK_API_KEY', help='environment variable holding the API key')
     args = ap.parse_args()
 
-    key = os.environ.get('DEEPSEEK_API_KEY', '')
+    key = os.environ.get(args.key_env, '')
+    url = args.base_url.rstrip('/') + '/chat/completions'
 
-    if not key and not args.dry_run:
+    if not key and not args.dry_run and args.base_url == DEEPSEEK_URL:
         raise SystemExit('DEEPSEEK_API_KEY is not set (add it under Settings > Secrets and variables > Actions)')
 
     langs = [l.strip() for l in args.languages.split(',') if l.strip()] or LANGS
@@ -159,7 +174,7 @@ def main():
                 if args.dry_run:
                     continue
 
-                for it in ask(key, args.model, lang, items):
+                for it in ask(url, key, args.model, lang, items):
                     try:
                         idx = int(it.get('id', -1))
                     except (TypeError, ValueError):

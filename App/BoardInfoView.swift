@@ -32,6 +32,10 @@ struct BoardInfoView: View {
                     if board.isFabrication {
                         row("Type", String(localized: "Gerber and drill files (view only)"))
                     } else {
+                        if board.isSchematic {
+                            row("Type", String(localized: "Schematic (view only)"))
+                        }
+
                         row("KiCad", kicadVersionText)
                         row("File format", "\(board.stats.file_version)")
                     }
@@ -39,27 +43,10 @@ struct BoardInfoView: View {
                     row("Size", ByteCountFormatter.string(fromByteCount: Int64(board.fileSize), countStyle: .file))
                 }
 
-                Section("Board") {
-                    if board.stats.width_mm > 0 {
-                        row("Dimensions", String(format: "%.2f × %.2f mm", board.stats.width_mm, board.stats.height_mm))
-                    } else {
-                        row("Dimensions", String(localized: "No board outline (Edge.Cuts)"))
-                    }
-
-                    if !board.isFabrication {
-                        row("Thickness", String(format: "%.2f mm", board.stats.thickness_mm))
-                    }
-
-                    row("Copper layers", "\(board.stats.copper_layers)")
-                }
-
-                if board.isFabrication {
-                    Section("Contents") {
-                        row("Drill holes", "\(board.stats.holes)")
-                        row("Drawn objects", "\(board.stats.graphics)")
-                    }
+                if board.isSchematic {
+                    schematicSections
                 } else {
-                    kicadContents
+                    boardSections
                 }
 
                 Section("Performance") {
@@ -79,7 +66,7 @@ struct BoardInfoView: View {
                     }
                 }
             }
-            .navigationTitle("Board info")
+            .navigationTitle(board.isSchematic ? "Schematic info" as LocalizedStringKey : "Board info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -95,6 +82,70 @@ struct BoardInfoView: View {
         }
 
         return "\(board.generatorVersion) (\(board.generator))"
+    }
+
+    @ViewBuilder
+    private var boardSections: some View {
+        Section("Board") {
+            if board.stats.width_mm > 0 {
+                row("Dimensions", String(format: "%.2f × %.2f mm", board.stats.width_mm, board.stats.height_mm))
+            } else {
+                row("Dimensions", String(localized: "No board outline (Edge.Cuts)"))
+            }
+
+            if !board.isFabrication {
+                row("Thickness", String(format: "%.2f mm", board.stats.thickness_mm))
+            }
+
+            row("Copper layers", "\(board.stats.copper_layers)")
+        }
+
+        if board.isFabrication {
+            Section("Contents") {
+                row("Drill holes", "\(board.stats.holes)")
+                row("Drawn objects", "\(board.stats.graphics)")
+            }
+        } else {
+            kicadContents
+        }
+    }
+
+    @ViewBuilder
+    private var schematicSections: some View {
+        Section("Schematic") {
+            row("Sheets", "\(board.sheets.count)")
+
+            if let sheet = board.currentSheet {
+                row("This sheet", sheet.page.isEmpty ? sheet.title : "\(sheet.title) (\(sheet.page))")
+
+                if !sheet.file.isEmpty {
+                    row("File", sheet.file)
+                }
+            }
+
+            row("Paper", String(format: "%.0f × %.0f mm", board.stats.width_mm, board.stats.height_mm))
+            row("Nets", "\(board.stats.nets)")
+        }
+
+        Section("On this sheet") {
+            row("Symbols", "\(board.stats.footprints)")
+            row("Pins", "\(board.stats.pads)")
+            row("Wires", "\(board.stats.tracks)")
+            row("Labels", "\(board.stats.texts)")
+        }
+
+        if !board.missingSheetFiles.isEmpty {
+            Section("Missing sub-sheet files") {
+                ForEach(board.missingSheetFiles, id: \.self) { file in
+                    Text(verbatim: file)
+                        .font(.footnote.monospaced())
+                }
+
+                Text("Open the project folder to see these sheets.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var kicadContents: some View {

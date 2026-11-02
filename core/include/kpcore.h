@@ -198,6 +198,9 @@ typedef struct
 } kp_sheet_info;
 
 int32_t     kp_data_is_schematic( const char* data, size_t length );
+/** The root sheet among the files: a schematic no other file uses as a sub-sheet (the one
+ * named like the .kicad_pro first). -1 if there is no schematic. */
+int32_t     kp_sch_guess_root( const kp_fab_input* files );
 kp_board*   kp_board_load_sch( const kp_fab_input* files, int32_t root, int32_t sheet, char* error,
                                size_t error_size );
 kp_board*   kp_board_sch_open_sheet( const kp_board* board, int32_t sheet, char* error, size_t error_size );

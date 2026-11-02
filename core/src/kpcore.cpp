@@ -25,12 +25,14 @@
 #include "sexpr.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <memory>
 #include <new>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -327,6 +329,89 @@ static kp_board* buildSheet( std::shared_ptr<const kp::Schematic> aSch, int32_t 
                 b.board.nets.push_back( std::string() );
             },
             false, error, error_size );
+}
+
+
+extern "C" int32_t kp_sch_guess_root( const kp_fab_input* files )
+{
+    if( !files )
+        return -1;
+
+    auto lower = []( std::string s )
+    {
+        for( char& c : s )
+            c = (char) std::tolower( (unsigned char) c );
+
+        return s;
+    };
+
+    auto base = [&]( const std::string& path )
+    {
+        size_t slash = path.find_last_of( "/\\" );
+        return lower( slash == std::string::npos ? path : path.substr( slash + 1 ) );
+    };
+
+    auto stem = [&]( const std::string& path )
+    {
+        std::string b = base( path );
+        size_t      dot = b.rfind( '.' );
+        return dot == std::string::npos ? b : b.substr( 0, dot );
+    };
+
+    std::vector<int>      candidates;
+    std::set<std::string> referenced, projects;
+    std::vector<int>      refCount( files->files.size(), 0 );
+
+    for( size_t i = 0; i < files->files.size(); ++i )
+    {
+        const kp::FabInput& f = files->files[i];
+        std::string         b = base( f.name );
+
+        if( b.size() > 10 && b.compare( b.size() - 10, 10, ".kicad_pro" ) == 0 )
+            projects.insert( stem( f.name ) );
+
+        if( !kp::LooksLikeSchematic( f.data.data(), f.data.size() ) )
+            continue;
+
+        candidates.push_back( (int) i );
+
+        // sheet files this one refers to: (property "Sheetfile" "x.kicad_sch") or "Sheet file"
+        for( const char* key : { "\"Sheetfile\"", "\"Sheet file\"" } )
+        {
+            for( size_t p = f.data.find( key ); p != std::string::npos; p = f.data.find( key, p + 1 ) )
+            {
+                size_t q1 = f.data.find( '"', p + std::strlen( key ) );
+                size_t q2 = q1 == std::string::npos ? q1 : f.data.find( '"', q1 + 1 );
+
+                if( q2 != std::string::npos && q2 - q1 < 1024 )
+                {
+                    referenced.insert( base( f.data.substr( q1 + 1, q2 - q1 - 1 ) ) );
+                    refCount[i]++;
+                }
+            }
+        }
+    }
+
+    if( candidates.empty() )
+        return -1;
+
+    int best = -1;
+
+    for( int c : candidates )
+    {
+        const std::string& name = files->files[(size_t) c].name;
+
+        if( referenced.count( base( name ) ) )
+            continue;
+
+        // the project's own schematic first, then the one with the most sub-sheets
+        auto score = [&]( int i ) { return std::make_pair( projects.count( stem( files->files[(size_t) i].name ) ) ? 1 : 0, refCount[(size_t) i] ); };
+
+        if( best < 0 || score( c ) > score( best ) )
+            best = c;
+    }
+
+    return best >= 0 ? best : candidates.front();
 }
 
 
@@ -733,7 +818,8 @@ extern "C" const uint32_t* kp_board_indices( const kp_board* board, size_t* coun
 
 extern "C" void kp_board_release_mesh( kp_board* board )
 {
-    if( !board )
+    // schematic sheets are picked by their triangles, so they keep the mesh
+    if( !board || board->sch )
         return;
 
     std::vector<float>().swap( board->mesh.vertices );
@@ -1933,5 +2019,5 @@ extern "C" const char* kp_fab_warning( const kp_fab* fab, int32_t i )
 
 extern "C" const char* kp_core_version( void )
 {
-    return "0.5.0";
+    return "0.6.0";
 }

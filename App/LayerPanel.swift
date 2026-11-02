@@ -8,71 +8,100 @@ struct LayerPanel: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Quick select") {
-                    Button {
-                        store.showAllLayers()
-                    } label: {
-                        Label("All layers", systemImage: "square.3.layers.3d")
-                    }
+            if store.isSchematicView {
+                schematicLayers
+            } else {
+                boardLayers
+            }
+        }
+    }
 
-                    Button {
-                        store.showCopperOnly()
-                    } label: {
-                        Label("Copper only", systemImage: "bolt.horizontal")
-                    }
+    /// A schematic sheet: its drawing layers only.
+    private var schematicLayers: some View {
+        List {
+            Section {
+                Button {
+                    store.showAllLayers()
+                } label: {
+                    Label("All layers", systemImage: "square.3.layers.3d")
+                }
+            }
 
-                    Button {
-                        store.showSide(front: true)
-                    } label: {
-                        Label("Front side only", systemImage: "arrow.up.square")
-                    }
+            Section("Schematic layers") {
+                ForEach((store.board?.slots ?? []).filter { $0.hasContent }) { slot in
+                    LayerRow(slot: slot)
+                }
+            }
+        }
+        .navigationTitle("Layers")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
-                    Button {
-                        store.showSide(front: false)
-                    } label: {
-                        Label("Back side only", systemImage: "arrow.down.square")
-                    }
-
-                    Toggle(isOn: $store.flipped) {
-                        Label("Bottom view", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                    }
+    private var boardLayers: some View {
+        List {
+            Section("Quick select") {
+                Button {
+                    store.showAllLayers()
+                } label: {
+                    Label("All layers", systemImage: "square.3.layers.3d")
                 }
 
-                Section("Objects") {
-                    ForEach(ObjectCategory.allCases) { category in
-                        Toggle(isOn: Binding(get: { store.isShown(category) },
-                                             set: { store.setShown(category, $0) })) {
-                            Label(category.title, systemImage: category.systemImage)
-                        }
-                    }
+                Button {
+                    store.showCopperOnly()
+                } label: {
+                    Label("Copper only", systemImage: "bolt.horizontal")
                 }
 
-                let copper = slots(of: Self.copperKinds, includeEmpty: true)
-                let technical = slots(of: Self.technicalKinds, includeEmpty: false)
-                let other = slots(of: Self.otherKinds, includeEmpty: false)
-
-                if !copper.isEmpty {
-                    Section("Copper layers") {
-                        ForEach(copper) { slot in LayerRow(slot: slot) }
-                    }
+                Button {
+                    store.showSide(front: true)
+                } label: {
+                    Label("Front side only", systemImage: "arrow.up.square")
                 }
 
-                if !technical.isEmpty {
-                    Section("Technical layers") {
-                        ForEach(technical) { slot in LayerRow(slot: slot) }
-                    }
+                Button {
+                    store.showSide(front: false)
+                } label: {
+                    Label("Back side only", systemImage: "arrow.down.square")
                 }
 
-                if !other.isEmpty {
-                    Section("Edge and user layers") {
-                        ForEach(other) { slot in LayerRow(slot: slot) }
+                Toggle(isOn: $store.flipped) {
+                    Label("Bottom view", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                }
+            }
+
+            Section("Objects") {
+                ForEach(ObjectCategory.allCases) { category in
+                    Toggle(isOn: Binding(get: { store.isShown(category) },
+                                         set: { store.setShown(category, $0) })) {
+                        Label(category.title, systemImage: category.systemImage)
                     }
                 }
             }
-            .navigationTitle("Layers")
-            .navigationBarTitleDisplayMode(.inline)
+
+            let copper = slots(of: Self.copperKinds, includeEmpty: true)
+            let technical = slots(of: Self.technicalKinds, includeEmpty: false)
+            let other = slots(of: Self.otherKinds, includeEmpty: false)
+
+            if !copper.isEmpty {
+                Section("Copper layers") {
+                    ForEach(copper) { slot in LayerRow(slot: slot) }
+                }
+            }
+
+            if !technical.isEmpty {
+                Section("Technical layers") {
+                    ForEach(technical) { slot in LayerRow(slot: slot) }
+                }
+            }
+
+            if !other.isEmpty {
+                Section("Edge and user layers") {
+                    ForEach(other) { slot in LayerRow(slot: slot) }
+                }
+            }
         }
+        .navigationTitle("Layers")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private static let copperKinds: Set<LayerKind> = [.copper]

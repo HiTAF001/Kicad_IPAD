@@ -186,6 +186,9 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
     private var lastFitToken = -1
     private var drawList: [DrawItem] = []
 
+    /// Canvas colour of the board on screen (dark for boards, paper colour for schematics).
+    private var background = backgroundColor
+
     private var highlight: HighlightSpec?
     private var highlightBuffer: MTLBuffer?
     private var highlightList: [DrawItem] = []
@@ -402,6 +405,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
             dirty = true
             highlightDirty = true
             ratsnestBuffer = nil
+            applyBackground(board?.background ?? backgroundColor)
         }
 
         if dragPreview != committedOffset {
@@ -542,6 +546,37 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         }
     }
 
+    private func applyBackground(_ color: SIMD4<Float>) {
+        guard color != background else { return }
+
+        background = color
+        view?.clearColor = MTLClearColor(red: Double(color.x), green: Double(color.y), blue: Double(color.z), alpha: 1)
+        view?.backgroundColor = UIColor(red: CGFloat(color.x), green: CGFloat(color.y), blue: CGFloat(color.z), alpha: 1)
+    }
+
+    /// Colour of the draw group an index range belongs to (groups are in index order).
+    private func groupColor(at indexStart: UInt32, in board: LoadedBoard) -> SIMD4<Float>? {
+        var lo = 0
+        var hi = board.groups.count - 1
+        var found: Int?
+
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+
+            if board.groups[mid].indexStart <= indexStart {
+                found = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+
+        guard let found else { return nil }
+
+        let g = board.groups[found]
+        return indexStart < g.indexStart + g.indexCount ? g.color : nil
+    }
+
     private func rebuildHighlight() {
         highlightBuffer = nil
         highlightList = []
@@ -555,10 +590,17 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
         guard !ranges.isEmpty else { return }
 
+        // schematics: in drawing order within a layer, so outlines stay on top of fills
+        let schematic = board.isSchematic
         let sorted = ranges.enumerated().sorted { a, b in
             let ka = sortKey(Int(a.element.slot))
             let kb = sortKey(Int(b.element.slot))
-            return ka != kb ? ka < kb : a.offset < b.offset
+
+            if ka != kb {
+                return ka < kb
+            }
+
+            return schematic ? a.element.index_start < b.element.index_start : a.offset < b.offset
         }.map { $0.element }
 
         let available = ib.length / MemoryLayout<UInt32>.stride
@@ -569,18 +611,27 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
         var items: [DrawItem] = []
         var runSlot = -1
         var runStart = 0
+        var runColor: SIMD4<Float>?
 
         func closeRun() {
             guard runSlot >= 0, indices.count > runStart else { return }
 
-            let base = board.slots[runSlot].color
-            let mix: Float = 0.45
-            let bright = SIMD4<Float>(base.x + (1 - base.x) * mix,
-                                      base.y + (1 - base.y) * mix,
-                                      base.z + (1 - base.z) * mix,
-                                      max(base.w, 0.85))
+            let color: SIMD4<Float>
+
+            if let runColor {
+                // schematics: the item in its own colours over the faded sheet
+                color = SIMD4<Float>(runColor.x * 0.85, runColor.y * 0.85, runColor.z * 0.85, max(runColor.w, 0.9))
+            } else {
+                let base = board.slots[runSlot].color
+                let mix: Float = 0.45
+                color = SIMD4<Float>(base.x + (1 - base.x) * mix,
+                                     base.y + (1 - base.y) * mix,
+                                     base.z + (1 - base.z) * mix,
+                                     max(base.w, 0.85))
+            }
+
             items.append(DrawItem(stencilRef: UInt32(runSlot % 255 + 1),
-                                  color: bright,
+                                  color: color,
                                   indexOffset: runStart * MemoryLayout<UInt32>.stride,
                                   indexCount: indices.count - runStart,
                                   minZoom: 0))
@@ -592,10 +643,13 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
 
             guard start >= 0, count > 0, start + count <= available else { continue }
 
-            if Int(r.slot) != runSlot {
+            let color = schematic ? groupColor(at: r.index_start, in: board) : nil
+
+            if Int(r.slot) != runSlot || color != runColor {
                 closeRun()
                 runSlot = Int(r.slot)
                 runStart = indices.count
+                runColor = color
             }
 
             indices.append(contentsOf: UnsafeBufferPointer(start: source + start, count: count))
@@ -895,7 +949,7 @@ final class BoardRenderer: NSObject, MTKViewDelegate, UIGestureRecognizerDelegat
             // ---- highlight: dim everything, then redraw the selection brighter
             if let hb = highlightBuffer, !highlightList.isEmpty, let quad = quadBuffer, let resetState {
                 var dim = Uniforms(scale: SIMD2(1, 1), offset: SIMD2(0, 0),
-                                   color: SIMD4(backgroundColor.x, backgroundColor.y, backgroundColor.z, 0.62))
+                                   color: SIMD4(background.x, background.y, background.z, board.isSchematic ? 0.7 : 0.62))
                 encoder.setDepthStencilState(resetState)
                 encoder.setStencilReferenceValue(0)
                 encoder.setVertexBuffer(quad, offset: 0, index: 0)

@@ -117,6 +117,32 @@ struct SelectionCard: View {
             }
             .buttonStyle(.bordered)
 
+            if let sheet = store.selectedSheetTarget {
+                Button {
+                    store.openSheet(sheet)
+                } label: {
+                    Label("Open sheet", systemImage: "arrow.down.right.square")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            let others = store.selectedNetOtherSheets
+
+            if !others.isEmpty {
+                Menu {
+                    ForEach(others) { sheet in
+                        Button(sheet.page.isEmpty ? sheet.title : "\(sheet.title) (\(sheet.page))") {
+                            store.showNetOnSheet(sheet.id)
+                        }
+                    }
+                } label: {
+                    Label("Other sheets", systemImage: "rectangle.stack")
+                        .font(.callout)
+                }
+                .buttonStyle(.bordered)
+            }
+
             if selection.candidates.count > 1 {
                 Button {
                     store.nextCandidate()
@@ -145,6 +171,14 @@ struct SelectionCard: View {
         case .shape: return String(localized: "Graphic")
         case .text: return String(localized: "Text")
         case .nothing: return String(localized: "Net")
+        case .schSymbol: return String(localized: "Symbol")
+        case .schPin: return String(localized: "Pin")
+        case .schWire: return String(localized: "Wire")
+        case .schJunction: return String(localized: "Junction")
+        case .schLabel: return String(localized: "Label")
+        case .schSheet: return String(localized: "Sheet")
+        case .schNote: return String(localized: "Note")
+        case .schSheetPin: return String(localized: "Sheet pin")
         }
     }
 
@@ -158,6 +192,14 @@ struct SelectionCard: View {
         case .shape: return "pencil.and.outline"
         case .text: return "textformat"
         case .nothing: return "point.3.connected.trianglepath.dotted"
+        case .schSymbol: return "cpu"
+        case .schPin: return "line.diagonal"
+        case .schWire: return "point.topleft.down.curvedto.point.bottomright.up"
+        case .schJunction: return "circle.fill"
+        case .schLabel: return "tag"
+        case .schSheet: return "square.on.square"
+        case .schNote: return "text.alignleft"
+        case .schSheetPin: return "arrowtriangle.right"
         }
     }
 }

@@ -17,7 +17,7 @@ settings:
     GCC_ENABLE_CPP_EXCEPTIONS: YES
     GCC_ENABLE_CPP_RTTI: YES
     ENABLE_BITCODE: NO
-    MARKETING_VERSION: "0.5.0"
+    MARKETING_VERSION: "0.6.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -92,6 +92,14 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension:
                 - kicad_pcb
+          - UTTypeIdentifier: org.kicad.schematic
+            UTTypeDescription: KiCad schematic
+            UTTypeConformsTo:
+              - public.data
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - kicad_sch
           - UTTypeIdentifier: com.seyhanlabs.netloom.gerber
             UTTypeDescription: Gerber file
             UTTypeConformsTo:
@@ -131,6 +139,11 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - org.kicad.pcb
+          - CFBundleTypeName: KiCad schematic
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.kicad.schematic
           - CFBundleTypeName: Gerber and drill files
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate

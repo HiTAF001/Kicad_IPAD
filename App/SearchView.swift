@@ -14,7 +14,14 @@ struct SearchView: View {
         case footprints, nets
 
         var id: String { rawValue }
-        var title: String { self == .footprints ? "Footprint" : "Net" }
+    }
+
+    private func title(_ scope: Scope) -> LocalizedStringKey {
+        if scope == .nets {
+            return "Net"
+        }
+
+        return store.isSchematicView ? "Symbol" : "Footprint"
     }
 
     private static let limit = 300
@@ -24,7 +31,7 @@ struct SearchView: View {
             List {
                 Picker("Search", selection: $scope) {
                     ForEach(Scope.allCases) { s in
-                        Text(s.title).tag(s)
+                        Text(title(s)).tag(s)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -32,6 +39,8 @@ struct SearchView: View {
 
                 if let board = store.board {
                     switch scope {
+                    case .footprints where board.isSchematic:
+                        symbolResults(board)
                     case .footprints:
                         footprintResults(board)
                     case .nets:
@@ -86,6 +95,65 @@ struct SearchView: View {
         }
     }
 
+    /// Symbols of every sheet of a schematic.
+    @ViewBuilder
+    private func symbolResults(_ board: LoadedBoard) -> some View {
+        let matches = filteredSymbols(board)
+
+        if matches.isEmpty {
+            Text("No matching symbol")
+                .foregroundStyle(.secondary)
+        }
+
+        ForEach(matches) { symbol in
+            Button {
+                store.selectSchematicSymbol(symbol)
+                dismiss()
+            } label: {
+                HStack {
+                    Text(symbol.reference.isEmpty ? String(localized: "(unnamed)") : symbol.reference)
+                        .font(.body.monospaced())
+                        .frame(minWidth: 70, alignment: .leading)
+                    Text(symbol.value)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+
+                    if board.sheets.count > 1, symbol.sheet < board.sheets.count {
+                        Text(board.sheets[symbol.sheet].title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .foregroundStyle(Color.primary)
+        }
+    }
+
+    private func filteredSymbols(_ board: LoadedBoard) -> [SchematicSymbolEntry] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let all = board.schematicSymbols
+        let order: (SchematicSymbolEntry, SchematicSymbolEntry) -> Bool = {
+            $0.reference.localizedStandardCompare($1.reference) == .orderedAscending
+        }
+
+        guard !q.isEmpty else {
+            return Array(all.sorted(by: order).prefix(Self.limit))
+        }
+
+        let exact = all.filter { $0.reference.caseInsensitiveCompare(q) == .orderedSame }
+        let prefix = all.filter {
+            $0.reference.lowercased().hasPrefix(q.lowercased()) && $0.reference.caseInsensitiveCompare(q) != .orderedSame
+        }.sorted(by: order)
+        let rest = all.filter {
+            !$0.reference.lowercased().hasPrefix(q.lowercased())
+                && ($0.reference.localizedCaseInsensitiveContains(q) || $0.value.localizedCaseInsensitiveContains(q))
+        }.sorted(by: order)
+
+        return Array((exact + prefix + rest).prefix(Self.limit))
+    }
+
     @ViewBuilder
     private func netResults(_ board: LoadedBoard) -> some View {
         let matches = filteredNets(board)
@@ -97,7 +165,7 @@ struct SearchView: View {
 
         ForEach(matches) { net in
             Button {
-                store.selectNet(net.id)
+                store.goToNet(net.id)
                 dismiss()
             } label: {
                 Text(net.name)

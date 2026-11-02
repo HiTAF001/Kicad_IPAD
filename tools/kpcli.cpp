@@ -104,6 +104,36 @@ static kp_board* loadSchematic( const char* aPath )
 }
 
 
+/// The root sheet the app would pick among the schematic and project files below a folder.
+static int cmdRoot( const char* aDir )
+{
+    namespace fs = std::filesystem;
+    std::error_code          ec;
+    kp_fab_input*            in = kp_fab_input_new();
+    std::vector<std::string> names;
+    std::string              data;
+
+    for( auto it = fs::recursive_directory_iterator( aDir, ec ); it != fs::recursive_directory_iterator(); it.increment( ec ) )
+    {
+        if( ec || it.depth() > 3 )
+            continue;
+
+        const fs::path& p = it->path();
+
+        if( ( p.extension() == ".kicad_sch" || p.extension() == ".kicad_pro" ) && readFile( p.string().c_str(), data ) )
+        {
+            names.push_back( fs::relative( p, aDir, ec ).generic_string() );
+            kp_fab_input_add( in, names.back().c_str(), data.data(), data.size() );
+        }
+    }
+
+    int root = kp_sch_guess_root( in );
+    printf( "%s\n", root >= 0 ? names[(size_t) root].c_str() : "(none)" );
+    kp_fab_input_free( in );
+    return root >= 0 ? 0 : 1;
+}
+
+
 /// A .kicad_pcb, or fabrication files: one Gerber / drill / zip file, or a folder of them.
 static kp_board* load( const char* aPath )
 {
@@ -1163,6 +1193,9 @@ int main( int argc, char** argv )
 
     if( argc >= 3 && !strcmp( argv[1], "sheets" ) )
         return cmdSheets( argv[2] );
+
+    if( argc >= 3 && !strcmp( argv[1], "root" ) )
+        return cmdRoot( argv[2] );
 
     if( argc >= 3 && !strcmp( argv[1], "picksweep" ) )
         return cmdPickSweep( argv[2], argc >= 4 ? atoi( argv[3] ) : 60 );

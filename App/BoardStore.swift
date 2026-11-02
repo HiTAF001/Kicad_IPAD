@@ -9,11 +9,73 @@ import simd
 extension UTType {
     /// Declared in Info.plist (UTImportedTypeDeclarations).
     static let kicadPCB = UTType(importedAs: "org.kicad.pcb")
+    static let kicadSchematic = UTType(importedAs: "org.kicad.schematic")
 }
 
 struct SampleBoard: Identifiable {
-    let id: String      // resource name in the bundle
+    let id: String
     let title: String
+    /// Board file in the bundle (without extension).
+    var resource: String
+    /// Schematic files in the bundle, root first (without extension).
+    var schematics: [String] = []
+    /// Open the schematic instead of the board.
+    var startWithSchematic = false
+
+    init(id: String, title: String, schematics: [String] = [], startWithSchematic: Bool = false, resource: String? = nil) {
+        self.id = id
+        self.title = title
+        self.resource = resource ?? id
+        self.schematics = schematics
+        self.startWithSchematic = startWithSchematic
+    }
+}
+
+/// The files of a KiCad project: its board and its schematic, either of which can be shown.
+struct ProjectFiles {
+    var name: String
+    var board: (name: String, data: Data)?
+    var schematic: [(name: String, data: Data)]
+
+    var hasBoard: Bool { board != nil }
+    var hasSchematic: Bool { !schematic.isEmpty }
+
+    /// Sorts files read from a folder into a project; nil when there is no board or schematic.
+    static func from(files: [(name: String, data: Data)], name: String) -> ProjectFiles? {
+        func ext(_ n: String) -> String { (n as NSString).pathExtension.lowercased() }
+        func stem(_ n: String) -> String { ((n as NSString).lastPathComponent as NSString).deletingPathExtension }
+
+        let schematics = files.filter { ext($0.name) == "kicad_sch" }
+        let boards = files.filter { ext($0.name) == "kicad_pcb" }
+        let projectStems = Set(files.filter { ext($0.name) == "kicad_pro" }.map { stem($0.name) })
+
+        guard !schematics.isEmpty || !boards.isEmpty else { return nil }
+
+        // the board of the project file, else the one nearest the top of the folder
+        let board = boards.first { projectStems.contains(stem($0.name)) }
+            ?? boards.min { a, b in
+                let da = a.name.filter { $0 == "/" }.count, db = b.name.filter { $0 == "/" }.count
+                return da != db ? da < db : a.name < b.name
+            }
+        let title = projectStems.first ?? board.map { stem($0.name) } ?? name
+
+        return ProjectFiles(name: title, board: board, schematic: schematics)
+    }
+}
+
+/// A board or schematic kept aside while the other view of the project is shown.
+struct ParkedView {
+    let board: LoadedBoard
+    let document: BoardDocument?
+    let fileURL: URL?
+    let docState: DocumentState
+}
+
+/// What to do once another sheet is open.
+enum SheetFollowUp {
+    case none
+    case selectNet(Int32)
+    case selectSymbol(Int)
 }
 
 /// What is selected and what the user can cycle through at the same spot.
@@ -119,8 +181,8 @@ final class BoardStore: ObservableObject {
     // editing
     @Published var editMode = false {
         didSet {
-            if editMode && board?.isFabrication == true {
-                editMode = false // Gerber boards are for viewing only
+            if editMode && isViewOnly {
+                editMode = false // Gerber files and schematics are for viewing only
                 return
             }
 
@@ -154,7 +216,7 @@ final class BoardStore: ObservableObject {
         didSet {
             guard drawTool != oldValue else { return }
 
-            if drawTool && board?.isFabrication == true {
+            if drawTool && isViewOnly {
                 drawTool = false
                 return
             }
@@ -203,6 +265,10 @@ final class BoardStore: ObservableObject {
 
     private var document: BoardDocument?
     private var fileURL: URL?
+
+    /// Board and schematic of the open project (when it has both, the toolbar switches).
+    @Published private(set) var project: ProjectFiles?
+    private var parkedView: ParkedView?
     private var toastCounter = 0
     private var rebuildGeneration = 0
 
@@ -210,7 +276,11 @@ final class BoardStore: ObservableObject {
     @Published var autoPanel: String?
 
     let samples = [
-        SampleBoard(id: "pic_programmer", title: String(localized: "PIC programmer (2 layers)")),
+        SampleBoard(id: "pic_programmer", title: String(localized: "PIC programmer (2 layers)"),
+                    schematics: ["pic_programmer", "pic_sockets"]),
+        SampleBoard(id: "pic_programmer_sch", title: String(localized: "PIC programmer schematic (2 sheets)"),
+                    schematics: ["pic_programmer", "pic_sockets"], startWithSchematic: true,
+                    resource: "pic_programmer"),
         SampleBoard(id: "ecc83-pp", title: String(localized: "ECC83 tube amplifier (2 layers)"))
     ]
 
@@ -255,6 +325,18 @@ final class BoardStore: ObservableObject {
     var documentName: String { board?.name ?? "board" }
     /// The open board came from Gerber / drill files (no editing, checks or exports).
     var isFabricationView: Bool { board?.isFabrication == true }
+    /// A schematic sheet is shown.
+    var isSchematicView: Bool { board?.isSchematic == true }
+    /// Gerber files and schematics: no editing, design check or fabrication output.
+    var isViewOnly: Bool { isFabricationView || isSchematicView }
+
+    /// Unsaved edits, also of a board kept aside while its schematic is shown.
+    var unsavedEdits: Bool { docState.modified || parkedView?.docState.modified == true }
+
+    /// The project has both a board and a schematic.
+    var canSwitchView: Bool {
+        project?.hasBoard == true && project?.hasSchematic == true && board != nil && !isLoading && !isRebuilding
+    }
 
     // MARK: - Launch arguments (CI screenshots)
 
@@ -364,6 +446,12 @@ final class BoardStore: ObservableObject {
             showFab = true
             makeFabrication()
 
+        case "sheet":
+            // the first sub-sheet of a schematic
+            if let child = board.sheets.first(where: { $0.parent == board.sheetIndex }) {
+                openSheet(child.id)
+            }
+
         case "gerber":
             // the board's own fabrication files, opened again as a Gerber set
             let zip = board.makeFabrication(baseName: board.name, useAuxOrigin: false).zip
@@ -378,13 +466,13 @@ final class BoardStore: ObservableObject {
     // MARK: - Opening
 
     func open(url: URL) {
-        if docState.modified {
+        if unsavedEdits {
             pendingAction = .open(url)
             return
         }
 
         if url.hasDirectoryPath {
-            openFabrication(urls: [url])
+            openFolderOrFiles(urls: [url])
             return
         }
 
@@ -403,17 +491,49 @@ final class BoardStore: ObservableObject {
 
         guard !urls.isEmpty else { return }
 
-        if docState.modified {
+        if unsavedEdits {
             pendingAction = .openFiles(urls)
             return
         }
 
-        openFabrication(urls: urls)
+        openFolderOrFiles(urls: urls)
     }
 
-    private func openFabrication(urls: [URL]) {
-        loadFabrication(name: Self.fabricationName(urls)) {
-            try FileReader.readAll(urls: urls)
+    /// Folders and several files: a KiCad project (board and / or schematic) when they hold
+    /// one, otherwise a set of Gerber and drill files.
+    private func openFolderOrFiles(urls: [URL]) {
+        guard !isLoading else { return }
+
+        let name = Self.fabricationName(urls)
+        isLoading = true
+        loadingName = name
+        errorMessage = nil
+
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<(BoardDocument?, LoadedBoard), Error>
+            var project: ProjectFiles?
+
+            do {
+                if let files = try FileReader.readProject(urls: urls),
+                   let found = ProjectFiles.from(files: files, name: name) {
+                    project = found
+
+                    if let board = found.board {
+                        let doc = try BoardDocument.create(data: board.data)
+                        let loaded = try LoadedBoard.load(document: doc, name: found.name, fileSize: board.data.count)
+                        outcome = .success((doc, loaded))
+                    } else {
+                        outcome = .success((nil, try LoadedBoard.loadSchematic(files: found.schematic, name: found.name)))
+                    }
+                } else {
+                    let loaded = try LoadedBoard.loadFabrication(files: try FileReader.readAll(urls: urls), name: name)
+                    outcome = .success((nil, loaded))
+                }
+            } catch {
+                outcome = .failure(error)
+            }
+
+            await self.finish(outcome, url: nil, project: project)
         }
     }
 
@@ -458,18 +578,58 @@ final class BoardStore: ObservableObject {
     }
 
     func openSample(_ sample: SampleBoard) {
-        if docState.modified {
+        if unsavedEdits {
             pendingAction = .openSample(sample)
             return
         }
 
-        guard let url = Bundle.main.url(forResource: sample.id, withExtension: "kicad_pcb") else {
+        guard let url = Bundle.main.url(forResource: sample.resource, withExtension: "kicad_pcb") else {
             errorMessage = String(localized: "The sample file is missing from the app.")
             return
         }
 
-        load(name: sample.id, url: nil) {
-            try Data(contentsOf: url)
+        let schematicURLs = sample.schematics.compactMap { Bundle.main.url(forResource: $0, withExtension: "kicad_sch") }
+
+        guard schematicURLs.count == sample.schematics.count else {
+            errorMessage = String(localized: "The sample file is missing from the app.")
+            return
+        }
+
+        guard !sample.schematics.isEmpty else {
+            load(name: sample.resource, url: nil) {
+                try Data(contentsOf: url)
+            }
+            return
+        }
+
+        guard !isLoading else { return }
+
+        isLoading = true
+        loadingName = sample.resource
+        errorMessage = nil
+        let name = sample.resource
+        let startWithSchematic = sample.startWithSchematic
+
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<(BoardDocument?, LoadedBoard), Error>
+            var project: ProjectFiles?
+
+            do {
+                let boardData = try Data(contentsOf: url)
+                let schematic = try schematicURLs.map { (name: $0.lastPathComponent, data: try Data(contentsOf: $0)) }
+                project = ProjectFiles(name: name, board: (name: url.lastPathComponent, data: boardData), schematic: schematic)
+
+                if startWithSchematic {
+                    outcome = .success((nil, try LoadedBoard.loadSchematic(files: schematic, root: 0, name: name)))
+                } else {
+                    let doc = try BoardDocument.create(data: boardData)
+                    outcome = .success((doc, try LoadedBoard.load(document: doc, name: name, fileSize: boardData.count)))
+                }
+            } catch {
+                outcome = .failure(error)
+            }
+
+            await self.finish(outcome, url: nil, project: project)
         }
     }
 
@@ -486,7 +646,12 @@ final class BoardStore: ObservableObject {
             do {
                 let data = try read()
 
-                if LoadedBoard.looksLikeFabrication(data) {
+                if LoadedBoard.looksLikeSchematic(data) {
+                    // one schematic file: its sub-sheets come with the project folder
+                    let file = url?.lastPathComponent ?? name
+                    let loaded = try LoadedBoard.loadSchematic(files: [(name: file, data: data)], root: 0, name: name)
+                    outcome = .success((nil, loaded))
+                } else if LoadedBoard.looksLikeFabrication(data) {
                     // a Gerber, drill or zip file: view only
                     let file = url?.lastPathComponent ?? name
                     let loaded = try LoadedBoard.loadFabrication(files: [(name: file, data: data)], name: name)
@@ -504,41 +669,22 @@ final class BoardStore: ObservableObject {
         }
     }
 
-    private func finish(_ outcome: Result<(BoardDocument?, LoadedBoard), Error>, url: URL?) {
+    private func finish(_ outcome: Result<(BoardDocument?, LoadedBoard), Error>, url: URL?,
+                        project: ProjectFiles? = nil) {
         isLoading = false
 
         switch outcome {
         case .success(let (doc, loaded)):
-            rebuildGeneration += 1 // a rebuild of the previous document must not land here
-            document = doc
-            fileURL = doc == nil ? nil : url
-            docState = doc.map { DocumentState($0) } ?? DocumentState()
-            dragPreview = nil
-            isRebuilding = false
-            activeSheet = nil
-            board = loaded
-            visibleSlots = Set(loaded.slots.filter { $0.defaultVisible }.map { $0.id })
-            hiddenKinds = []
-            flipped = pendingFlip
+            self.project = project
+            parkedView = nil
+            present(ParkedView(board: loaded, document: doc, fileURL: doc == nil ? nil : url,
+                               docState: doc.map { DocumentState($0) } ?? DocumentState()))
+            flipped = pendingFlip && !loaded.isSchematic
             pendingFlip = false
-            cursorText = nil
-            selection = nil
-            highlightWholeNet = false
-            measureMode = false
-            editMode = false
-            routeSettings.slot = -1
-            drcReport = nil
-            drcFocusID = nil
-            showDRC = false
-            fabPackage = nil
-            showFab = false
-            drawTool = false
 
             if doc != nil {
                 loadSiblingRules(for: url)
             }
-
-            fitToken += 1
 
             if let panel = pendingPanel {
                 pendingPanel = nil
@@ -557,13 +703,196 @@ final class BoardStore: ObservableObject {
         }
     }
 
+    /// Shows a board, schematic sheet or Gerber set with fresh view state.
+    private func present(_ view: ParkedView, keepLayers: Bool = false) {
+        rebuildGeneration += 1 // a rebuild of the previous document must not land here
+        document = view.document
+        fileURL = view.fileURL
+        docState = view.docState
+        dragPreview = nil
+        isRebuilding = false
+        activeSheet = nil
+
+        let sameLayers = keepLayers && board?.slots.count == view.board.slots.count
+        board = view.board
+
+        if !sameLayers {
+            visibleSlots = Set(view.board.slots.filter { $0.defaultVisible }.map { $0.id })
+            hiddenKinds = []
+        }
+
+        flipped = false
+        cursorText = nil
+        selection = nil
+        highlightWholeNet = false
+        measureMode = false
+        editMode = false
+        routeSettings.slot = -1
+        drcReport = nil
+        drcFocusID = nil
+        showDRC = false
+        fabPackage = nil
+        showFab = false
+        drawTool = false
+        fitToken += 1
+    }
+
+    // MARK: - Board and schematic of a project
+
+    /// Switches between the board and the schematic of the project; the other one is kept
+    /// (with its edits) until a new file is opened.
+    func switchView() {
+        guard canSwitchView, let current = board, let project else { return }
+
+        let parked = ParkedView(board: current, document: document, fileURL: fileURL, docState: docState)
+
+        if let other = parkedView {
+            parkedView = parked
+            present(other)
+            return
+        }
+
+        isLoading = true
+        loadingName = project.name
+
+        let toSchematic = !current.isSchematic
+
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<ParkedView, Error>
+
+            do {
+                if toSchematic {
+                    outcome = .success(ParkedView(board: try LoadedBoard.loadSchematic(files: project.schematic, name: project.name),
+                                                  document: nil, fileURL: nil, docState: DocumentState()))
+                } else if let boardFile = project.board {
+                    let doc = try BoardDocument.create(data: boardFile.data)
+                    let loaded = try LoadedBoard.load(document: doc, name: project.name, fileSize: boardFile.data.count)
+                    outcome = .success(ParkedView(board: loaded, document: doc, fileURL: nil, docState: DocumentState(doc)))
+                } else {
+                    throw NetloomError.message(String(localized: "The file could not be opened."))
+                }
+            } catch {
+                outcome = .failure(error)
+            }
+
+            await self.finishSwitch(outcome, parked: parked)
+        }
+    }
+
+    private func finishSwitch(_ outcome: Result<ParkedView, Error>, parked: ParkedView) {
+        isLoading = false
+
+        switch outcome {
+        case .success(let view):
+            parkedView = parked
+            present(view)
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Schematic sheets
+
+    /// Opens another sheet of the schematic, then optionally selects something on it.
+    func openSheet(_ index: Int, then followUp: SheetFollowUp = .none) {
+        guard let current = board, current.isSchematic, index >= 0, index < current.sheets.count, !isLoading else {
+            return
+        }
+
+        if index == current.sheetIndex {
+            runFollowUp(followUp)
+            return
+        }
+
+        isLoading = true
+        loadingName = current.sheets[index].title
+
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<LoadedBoard, Error>
+
+            do {
+                outcome = .success(try current.openSheet(index))
+            } catch {
+                outcome = .failure(error)
+            }
+
+            await self.finishSheet(outcome, then: followUp)
+        }
+    }
+
+    private func finishSheet(_ outcome: Result<LoadedBoard, Error>, then followUp: SheetFollowUp) {
+        isLoading = false
+
+        switch outcome {
+        case .success(let loaded):
+            present(ParkedView(board: loaded, document: nil, fileURL: nil, docState: DocumentState()), keepLayers: true)
+            runFollowUp(followUp)
+        case .failure(let error):
+            showToast(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func runFollowUp(_ followUp: SheetFollowUp) {
+        switch followUp {
+        case .none: break
+        case .selectNet(let net): selectNet(Int(net))
+        case .selectSymbol(let index): selectFootprint(index)
+        }
+    }
+
+    /// The sheet the selected sheet box or sheet pin leads to.
+    var selectedSheetTarget: Int? {
+        guard let board, board.isSchematic, let item = selection?.item else { return nil }
+
+        switch item.itemType {
+        case .schSheet: return board.childSheet(forSheetItem: Int(item.index))
+        case .schSheetPin: return item.footprint >= 0 ? board.childSheet(forSheetItem: Int(item.footprint)) : nil
+        default: return nil
+        }
+    }
+
+    /// Other sheets on which the selected item's net appears.
+    var selectedNetOtherSheets: [SheetEntry] {
+        guard let board, board.isSchematic, let net = selection?.item.net, net > 0 else { return [] }
+
+        return board.netSheets(net).filter { $0 != board.sheetIndex && $0 < board.sheets.count }.map { board.sheets[$0] }
+    }
+
+    func showNetOnSheet(_ sheet: Int) {
+        guard let net = selection?.item.net, net > 0 else { return }
+        openSheet(sheet, then: .selectNet(net))
+    }
+
+    /// A symbol found by search, on whichever sheet it is.
+    func selectSchematicSymbol(_ entry: SchematicSymbolEntry) {
+        openSheet(entry.sheet, then: .selectSymbol(entry.index))
+    }
+
+    /// A net found by search: on this sheet when it is here, else on the first sheet it is on.
+    func goToNet(_ net: Int) {
+        guard let board else { return }
+
+        if board.isSchematic {
+            let sheets = board.netSheets(Int32(net))
+
+            if !sheets.contains(board.sheetIndex), let first = sheets.first {
+                openSheet(first, then: .selectNet(Int32(net)))
+                return
+            }
+        }
+
+        selectNet(net)
+    }
+
     func close() {
-        if docState.modified {
+        if unsavedEdits {
             pendingAction = .close
             return
         }
 
         rebuildGeneration += 1
+        project = nil
+        parkedView = nil
         board = nil
         document = nil
         fileURL = nil
@@ -583,6 +912,7 @@ final class BoardStore: ObservableObject {
 
         pendingAction = nil
         docState.modified = false // lets the action through; the document is replaced anyway
+        parkedView = nil
 
         switch action {
         case .open(let url): open(url: url)
@@ -767,7 +1097,7 @@ final class BoardStore: ObservableObject {
     }
 
     func selectFootprint(_ index: Int) {
-        let item = PickedItem.footprint(Int32(index))
+        let item = board?.isSchematic == true ? PickedItem.symbol(Int32(index)) : PickedItem.footprint(Int32(index))
         select(item, candidates: [item], tapPoint: nil)
         highlightWholeNet = false
         focusOnSelection()
@@ -1405,6 +1735,69 @@ enum FileReader {
         }
 
         return try result.get()
+    }
+
+    /// KiCad project files (schematics, boards, project files) among the picked files and
+    /// below the picked folders, named relative to their folder. nil when there is no board
+    /// or schematic among them.
+    static func readProject(urls: [URL]) throws -> [(name: String, data: Data)]? {
+        let wanted: Set<String> = ["kicad_sch", "kicad_pcb", "kicad_pro"]
+        var files: [(name: String, data: Data)] = []
+        var total = 0
+        let limit = 512 * 1024 * 1024
+
+        for url in urls {
+            if url.hasDirectoryPath {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let base = url.standardizedFileURL.path
+                guard let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey],
+                                                                  options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+                    continue
+                }
+
+                for case let entry as URL in walker {
+                    // KiCad's backup folders hold old copies of the same design
+                    if walker.level > 4 || entry.lastPathComponent.hasSuffix("-backups") {
+                        walker.skipDescendants()
+                        continue
+                    }
+
+                    guard wanted.contains(entry.pathExtension.lowercased()),
+                          (try? entry.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+
+                    let data = try Data(contentsOf: entry)
+                    total += data.count
+                    var name = entry.standardizedFileURL.path
+
+                    if name.hasPrefix(base) {
+                        name = String(name.dropFirst(base.count))
+                    }
+
+                    while name.hasPrefix("/") {
+                        name.removeFirst()
+                    }
+
+                    files.append((name: name, data: data))
+
+                    if total > limit {
+                        throw NetloomError.message(String(localized: "The selected files are too large."))
+                    }
+                }
+            } else if wanted.contains(url.pathExtension.lowercased()) {
+                let data = try read(url: url)
+                total += data.count
+                files.append((name: url.lastPathComponent, data: data))
+            }
+        }
+
+        let hasDesign = files.contains { ["kicad_sch", "kicad_pcb"].contains(($0.name as NSString).pathExtension.lowercased()) }
+        return hasDesign ? files : nil
     }
 
     /// The files behind a picked selection: files as they are, folders one level deep.

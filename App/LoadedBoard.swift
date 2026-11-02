@@ -28,6 +28,34 @@ enum ItemKind: Int, CaseIterable {
 /// Item types, matching KP_ITEM_* in kpcore.h.
 enum ItemType: Int32 {
     case nothing = 0, pad, via, track, arc, footprint, zone, shape, text
+    case schSymbol = 9, schPin, schWire, schJunction, schLabel, schSheet, schNote, schSheetPin
+}
+
+/// What a LoadedBoard shows (KP_KIND_* in kpcore.h).
+enum BoardKind {
+    case pcb, gerber, schematic
+}
+
+/// One sheet of a schematic hierarchy.
+struct SheetEntry: Identifiable, Equatable {
+    let id: Int          // index in the hierarchy (0 = root)
+    let parent: Int      // -1 for the root
+    let sheetItem: Int   // the sheet box in the parent sheet
+    let depth: Int
+    let name: String
+    let page: String
+    let file: String
+
+    var title: String { name.isEmpty ? String(localized: "Root sheet") : name }
+}
+
+/// A symbol somewhere in a schematic hierarchy (for search).
+struct SchematicSymbolEntry: Identifiable {
+    let id: Int
+    let sheet: Int
+    let index: Int
+    let reference: String
+    let value: String
 }
 
 /// Object categories the user can toggle.
@@ -109,7 +137,7 @@ struct LayerSlot: Identifiable {
 
     /// Name shown in the layer list: user name, plus the canonical one when different.
     var title: String { display.isEmpty ? name : display }
-    var subtitle: String? { (display.isEmpty || display == name) ? nil : name }
+    var subtitle: String? { (display.isEmpty || display == name || name.hasPrefix("Sch.")) ? nil : name }
 }
 
 struct DrawGroup {
@@ -160,6 +188,11 @@ struct PickedItem: Equatable, Hashable {
 
     static func footprint(_ index: Int32) -> PickedItem {
         PickedItem(type: ItemType.footprint.rawValue, index: index, footprint: index)
+    }
+
+    /// A placed symbol of a schematic sheet.
+    static func symbol(_ index: Int32) -> PickedItem {
+        PickedItem(type: ItemType.schSymbol.rawValue, index: index)
     }
 
     var itemType: ItemType { ItemType(rawValue: type) ?? .nothing }
@@ -249,6 +282,16 @@ final class LoadedBoard: @unchecked Sendable {
     let lineage: Int
     /// Built from Gerber / drill files: for viewing only.
     let isFabrication: Bool
+    let kind: BoardKind
+    /// Canvas colour (dark for boards, KiCad's paper colour for schematics).
+    let background: SIMD4<Float>
+    /// Schematics: the open sheet and the whole hierarchy.
+    let sheetIndex: Int
+    let sheets: [SheetEntry]
+    let missingSheetFiles: [String]
+
+    var isSchematic: Bool { kind == .schematic }
+    var currentSheet: SheetEntry? { sheetIndex < sheets.count ? sheets[sheetIndex] : nil }
 
     private let handle: OpaquePointer
 
@@ -258,6 +301,41 @@ final class LoadedBoard: @unchecked Sendable {
         self.handle = handle
         self.lineage = lineage
         isFabrication = kp_board_is_fab(handle) != 0
+
+        switch kp_board_kind(handle) {
+        case Int32(KP_KIND_SCHEMATIC): kind = .schematic
+        case Int32(KP_KIND_GERBER): kind = .gerber
+        default: kind = .pcb
+        }
+
+        var rgba = [Float](repeating: 0, count: 4)
+        kp_board_background(handle, &rgba)
+        background = SIMD4<Float>(rgba[0], rgba[1], rgba[2], 1)
+
+        var sheetList: [SheetEntry] = []
+        var missing: [String] = []
+
+        if kind == .schematic {
+            for i in 0..<Int(kp_sch_sheet_count(handle)) {
+                var info = kp_sheet_info()
+                kp_sch_sheet_info(handle, Int32(i), &info)
+                sheetList.append(SheetEntry(id: i,
+                                            parent: Int(info.parent),
+                                            sheetItem: Int(info.sheet_item),
+                                            depth: Int(info.depth),
+                                            name: kp_sch_sheet_name(handle, Int32(i)).map { String(cString: $0) } ?? "",
+                                            page: kp_sch_sheet_page(handle, Int32(i)).map { String(cString: $0) } ?? "",
+                                            file: kp_sch_sheet_file(handle, Int32(i)).map { String(cString: $0) } ?? ""))
+            }
+
+            for i in 0..<Int(kp_sch_missing_count(handle)) {
+                missing.append(kp_sch_missing_file(handle, Int32(i)).map { String(cString: $0) } ?? "")
+            }
+        }
+
+        sheets = sheetList
+        missingSheetFiles = missing
+        sheetIndex = kind == .schematic ? Int(kp_sch_current_sheet(handle)) : 0
 
         var s = kp_stats()
         kp_board_stats(handle, &s)
@@ -438,6 +516,93 @@ final class LoadedBoard: @unchecked Sendable {
         }
     }
 
+    /// Is this a KiCad schematic (.kicad_sch)?
+    static func looksLikeSchematic(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
+            guard let base = raw.baseAddress, raw.count > 0 else { return false }
+            return kp_data_is_schematic(base.assumingMemoryBound(to: CChar.self), raw.count) != 0
+        }
+    }
+
+    /// Builds the root sheet of a schematic from its files (names relative to the project
+    /// folder); the root is guessed when not given (background task).
+    static func loadSchematic(files: [(name: String, data: Data)], root: Int? = nil, name: String) throws -> LoadedBoard {
+        guard let device = MetalContext.shared.device else {
+            throw NetloomError.message(String(localized: "This device does not support Metal graphics."))
+        }
+
+        guard let input = kp_fab_input_new() else {
+            throw NetloomError.message(String(localized: "Out of memory."))
+        }
+
+        defer { kp_fab_input_free(input) }
+
+        var total = 0
+
+        for file in files {
+            total += file.data.count
+            file.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                guard let base = raw.baseAddress, raw.count > 0 else { return }
+                kp_fab_input_add(input, file.name, base.assumingMemoryBound(to: CChar.self), raw.count)
+            }
+        }
+
+        let rootIndex = root ?? Int(kp_sch_guess_root(input))
+
+        guard rootIndex >= 0 else {
+            throw NetloomError.message(String(localized: "No schematic file was found."))
+        }
+
+        let errorSize = 1024
+        var errorBuffer = [CChar](repeating: 0, count: errorSize)
+        let handle = errorBuffer.withUnsafeMutableBufferPointer { errPtr -> OpaquePointer? in
+            kp_board_load_sch(input, Int32(rootIndex), 0, errPtr.baseAddress, errorSize)
+        }
+
+        guard let handle else {
+            let message = errorBuffer.withUnsafeBufferPointer { ptr -> String in
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
+            }
+            throw NetloomError.message(message.isEmpty ? String(localized: "The file could not be opened.") : message)
+        }
+
+        do {
+            return try LoadedBoard(name: name, fileSize: total, handle: handle, device: device, lineage: 0)
+        } catch {
+            kp_board_free(handle)
+            throw error
+        }
+    }
+
+    /// Another sheet of the same schematic (no parsing; background task).
+    func openSheet(_ index: Int) throws -> LoadedBoard {
+        guard let device = MetalContext.shared.device else {
+            throw NetloomError.message(String(localized: "This device does not support Metal graphics."))
+        }
+
+        let errorSize = 512
+        var errorBuffer = [CChar](repeating: 0, count: errorSize)
+        let newHandle = errorBuffer.withUnsafeMutableBufferPointer { errPtr -> OpaquePointer? in
+            kp_board_sch_open_sheet(handle, Int32(index), errPtr.baseAddress, errorSize)
+        }
+
+        guard let newHandle else {
+            let message = errorBuffer.withUnsafeBufferPointer { ptr -> String in
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
+            }
+            throw NetloomError.message(message.isEmpty ? String(localized: "The sheet could not be opened.") : message)
+        }
+
+        do {
+            return try LoadedBoard(name: name, fileSize: fileSize, handle: newHandle, device: device, lineage: 0)
+        } catch {
+            kp_board_free(newHandle)
+            throw error
+        }
+    }
+
     /// Is this a Gerber, Excellon drill or zip file rather than a KiCad board?
     static func looksLikeFabrication(_ data: Data) -> Bool {
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
@@ -520,6 +685,50 @@ final class LoadedBoard: @unchecked Sendable {
     }
 
     // MARK: - Queries (main thread)
+
+    /// The sheet a sheet box of the open sheet leads to.
+    func childSheet(forSheetItem item: Int) -> Int? {
+        let child = Int(kp_sch_sheet_for_item(handle, Int32(item)))
+        return child >= 0 ? child : nil
+    }
+
+    /// Sheets on which a net appears.
+    func netSheets(_ net: Int32) -> [Int] {
+        let count = Int(kp_sch_net_sheets(handle, net, nil, 0))
+
+        guard count > 0 else { return [] }
+
+        var out = [Int32](repeating: 0, count: count)
+        _ = out.withUnsafeMutableBufferPointer { o in
+            kp_sch_net_sheets(handle, net, o.baseAddress, Int32(count))
+        }
+        return out.map { Int($0) }
+    }
+
+    /// Every symbol of the hierarchy (power symbols left out).
+    private(set) lazy var schematicSymbols: [SchematicSymbolEntry] = {
+        var list: [SchematicSymbolEntry] = []
+
+        for i in 0..<Int(kp_sch_symbol_count(handle)) {
+            var sheet: Int32 = 0
+            var index: Int32 = 0
+            var ref: UnsafePointer<CChar>?
+            var value: UnsafePointer<CChar>?
+
+            guard kp_sch_symbol_entry(handle, Int32(i), &sheet, &index, &ref, &value) != 0 else { continue }
+
+            let reference = ref.map { String(cString: $0) } ?? ""
+
+            if reference.hasPrefix("#") {
+                continue
+            }
+
+            list.append(SchematicSymbolEntry(id: i, sheet: Int(sheet), index: Int(index), reference: reference,
+                                             value: value.map { String(cString: $0) } ?? ""))
+        }
+
+        return list
+    }()
 
     func pick(at point: SIMD2<Double>, tolerance: Double, visible: [UInt8], hiddenKinds: UInt32,
               flipped: Bool) -> [PickedItem] {

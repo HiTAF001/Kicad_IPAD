@@ -103,7 +103,7 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.kicadPCB, .zip, .folder, .data],
+                          allowedContentTypes: [.kicadPCB, .kicadSchematic, .zip, .folder, .data],
                           allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
@@ -197,6 +197,11 @@ struct ContentView: View {
 
     private var title: String {
         guard let board = store.board else { return "Netloom" }
+
+        if board.isSchematic, let sheet = board.currentSheet, sheet.id != 0 {
+            return "\(board.name) › \(sheet.title)"
+        }
+
         return store.docState.modified ? "\(board.name) •" : board.name
     }
 
@@ -218,11 +223,25 @@ struct ContentView: View {
             } label: {
                 Label("Samples", systemImage: "square.grid.2x2")
             }
+
+            if store.project?.hasBoard == true && store.project?.hasSchematic == true {
+                Button {
+                    store.switchView()
+                } label: {
+                    Label(store.isSchematicView ? "Board" as LocalizedStringKey : "Schematic",
+                          systemImage: store.isSchematicView ? "cpu" : "flowchart")
+                }
+                .disabled(!store.canSwitchView)
+            }
+
+            if let board = store.board, board.isSchematic, board.sheets.count > 1 {
+                sheetMenu(board)
+            }
         }
 
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if store.board != nil {
-                if !store.isFabricationView {
+                if !store.isViewOnly {
                     Button {
                         store.editMode.toggle()
                     } label: {
@@ -255,11 +274,13 @@ struct ContentView: View {
                     Label("Measure", systemImage: store.measureMode ? "ruler.fill" : "ruler")
                 }
 
-                Button {
-                    store.flipped.toggle()
-                } label: {
-                    Label(store.flipped ? "View from top" as LocalizedStringKey : "View from bottom",
-                          systemImage: store.flipped ? "arrow.up.square" : "arrow.down.square")
+                if !store.isSchematicView {
+                    Button {
+                        store.flipped.toggle()
+                    } label: {
+                        Label(store.flipped ? "View from top" as LocalizedStringKey : "View from bottom",
+                              systemImage: store.flipped ? "arrow.up.square" : "arrow.down.square")
+                    }
                 }
 
                 Button {
@@ -294,6 +315,37 @@ struct ContentView: View {
         }
     }
 
+    /// Sheets of the schematic, indented by depth, and a way up to the parent sheet.
+    @ViewBuilder
+    private func sheetMenu(_ board: LoadedBoard) -> some View {
+        if let current = board.currentSheet, current.parent >= 0 {
+            Button {
+                store.openSheet(current.parent)
+            } label: {
+                Label("Parent sheet", systemImage: "arrow.turn.left.up")
+            }
+        }
+
+        Menu {
+            ForEach(board.sheets) { sheet in
+                Button {
+                    store.openSheet(sheet.id)
+                } label: {
+                    let indent = String(repeating: "    ", count: max(0, sheet.depth))
+                    let page = sheet.page.isEmpty ? "" : "  (\(sheet.page))"
+
+                    if sheet.id == board.sheetIndex {
+                        Label(indent + sheet.title + page, systemImage: "checkmark")
+                    } else {
+                        Text(indent + sheet.title + page)
+                    }
+                }
+            }
+        } label: {
+            Label("Sheets", systemImage: "rectangle.stack")
+        }
+    }
+
     // MARK: - Overlays
 
     private var statusBar: some View {
@@ -309,6 +361,10 @@ struct ContentView: View {
             } else if store.editMode {
                 Image(systemName: "pencil")
                 Text("Editing: select a footprint, track, via, zone or text")
+            } else if let board = store.board, board.isSchematic, !board.missingSheetFiles.isEmpty, store.cursorText == nil {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text("Some sub-sheet files are missing: open the project folder to see every sheet")
             } else if let text = store.cursorText {
                 Image(systemName: "scope")
                 Text(text)
@@ -367,20 +423,20 @@ struct WelcomeView: View {
                 }
 
                 Button(action: openFile) {
-                    Label("Open a board file (.kicad_pcb)", systemImage: "folder")
+                    Label("Open a KiCad file or project folder", systemImage: "folder")
                         .frame(maxWidth: 360)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
 
-                Text("Gerber and drill files can be opened too: pick them all at once, their folder or their ZIP.")
+                Text("Boards (.kicad_pcb) and schematics (.kicad_sch) open directly; pick the project folder to get every sheet and switch between board and schematic. Gerber and drill files can be opened too: pick them all at once, their folder or their ZIP.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 420)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Sample boards")
+                    Text("Samples")
                         .font(.headline)
 
                     ForEach(store.samples) { sample in
@@ -395,7 +451,7 @@ struct WelcomeView: View {
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
 
-                Text("Opens KiCad 5 – 10 board files. Pick a file from the Files app, iCloud Drive or AirDrop.")
+                Text("Opens KiCad 5 – 10 board files and KiCad 6 – 10 schematics. Pick a file from the Files app, iCloud Drive or AirDrop.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -467,6 +523,15 @@ struct HelpView: View {
                     helpRow("doc.viewfinder", "Viewing Gerber files", "Open the Gerber and drill files of any CAD program (several at once, their folder or a ZIP) to look at them layer by layer before ordering")
                 }
 
+                Section("Schematics") {
+                    helpRow("folder", "Open the project folder", "Brings every sheet of a schematic; a single .kicad_sch file shows only its own sheet")
+                    helpRow("rectangle.stack", "Sheets", "Lists the sheets of the hierarchy; \"Parent sheet\" goes one level up")
+                    helpRow("square.on.square", "Tap a sheet box", "\"Open sheet\" in its card goes into that sheet")
+                    helpRow("point.3.connected.trianglepath.dotted", "Highlight net", "Shows the net on this sheet; \"Other sheets\" jumps to where it continues")
+                    helpRow("magnifyingglass", "Search", "Finds symbols and nets on every sheet")
+                    helpRow("flowchart", "Board / Schematic", "Switches between the board and the schematic of a project; board edits are kept")
+                }
+
                 Section("Keyboard / trackpad") {
                     helpRow("rectangle.and.hand.point.up.left", "Scroll on the trackpad", "Pans the board")
                     helpRow("plus.magnifyingglass", "Pinch on the trackpad", "Zooms in")
@@ -492,7 +557,7 @@ struct HelpView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    Text("Netloom by Seyhan Labs opens and edits KiCad .kicad_pcb files. It is an independent app, not affiliated with the KiCad project. The public source code is licensed under GPL-3.0.")
+                    Text("Netloom by Seyhan Labs opens and edits KiCad .kicad_pcb files and shows .kicad_sch schematics. It is an independent app, not affiliated with the KiCad project. The public source code is licensed under GPL-3.0.")
                     Text("Core version \(String(cString: kp_core_version()))")
                         .foregroundStyle(.secondary)
                 }

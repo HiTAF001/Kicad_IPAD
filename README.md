@@ -4,14 +4,15 @@
 
 **iPad için PCB görüntüleme ve düzenleme** · Seyhan Labs
 
-Netloom, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan ve düzenleyen, yerel (native) bir uygulamadır.
+Netloom, KiCad'in `.kicad_pcb` dosyalarını iPad'de açan ve düzenleyen, `.kicad_sch` şemalarını
+gösteren, yerel (native) bir uygulamadır.
 Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşınabilir C++17 ile yazıldı.
 
-> Durum: **Faz 1–5: görüntüleyici, inceleme, düzenleme, Apple Pencil ile pist çizme, tasarım
-> kontrolü (DRC), üretim dosyaları ve Gerber görüntüleyici.** Kartı açar, KiCad renkleri ve yazı
-> tipiyle çizer; seçim, net vurgulama, arama, ölçüm, düzenleme, kayıpsız kaydetme, ratsnest var.
-> Faz 5 ile kalemle pist/via çizme, KiCad kurallarıyla DRC, Gerber/Excellon/BOM/dizgi dosyaları
-> ve başka programların Gerber'lerini açma geldi. Şematik sonraki fazlarda.
+> Durum: **Faz 1–6: görüntüleyici, inceleme, düzenleme, Apple Pencil ile pist çizme, tasarım
+> kontrolü (DRC), üretim dosyaları, Gerber görüntüleyici ve şema görüntüleyici.** Kartı açar, KiCad
+> renkleri ve yazı tipiyle çizer; seçim, net vurgulama, arama, ölçüm, düzenleme, kayıpsız kaydetme,
+> ratsnest var. Faz 6 ile KiCad 6–10 şemaları (hiyerarşik sayfalar, netler, sayfalar arası net
+> takibi) ve proje klasöründen kart ↔ şema geçişi geldi. Şema düzenleme sonraki fazda.
 
 | Üstten | Alttan görünüm | Katman paneli |
 |---|---|---|
@@ -22,6 +23,8 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/11-edit-rotate.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/12-edit-fields.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/8-measure.png) |
 | **Kalemle pist çizme** | **Tasarım kontrolü (DRC)** | **Gerber görüntüleyici** |
 | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/16-route.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/19-turkish-drc.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/20-gerber.png) |
+| **Şema görüntüleyici** | **Şemada net vurgulama** | **Alt sayfa** |
+| ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/22-schematic.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/23-schematic-net.png) | ![](https://raw.githubusercontent.com/HiTAF001/Kicad_IPAD/ci-screenshots/25-schematic-subsheet.png) |
 
 *Ekran görüntüleri her derlemede CI tarafından iPad simülatöründe çekilir (`ci-screenshots` dalı).*
 
@@ -75,11 +78,24 @@ Arayüz SwiftUI ile, çizim Metal ile, dosya okuma ve geometri üretimi taşına
   X2 bilgisinden, KiCad / Altium (Protel) / Eagle dosya adlarından bulunur. Aperture makroları,
   delikli aperture'lar, termal, bölgeler, yaylar, step-repeat, "clear" polarite ve negatif
   görüntü desteklenir. Bu kartlar yalnız görüntülenir.
+- **Şema görüntüleyici (Faz 6):** KiCad 6 – 10 `.kicad_sch` dosyaları KiCad'in varsayılan
+  renkleri, sayfa çerçevesi ve antet bloğuyla çizilir: semboller (çok birimli, De Morgan, aynalı ve
+  döndürülmüş), pin adları ve numaraları, teller, veriyolları, bağlantı noktaları, yerel / genel /
+  hiyerarşik etiketler, alt sayfa kutuları, notlar ve metin kutuları.
+  - **Hiyerarşi:** proje klasörü açılınca bütün alt sayfalar gelir; sayfa listesi, "Üst sayfa",
+    sayfa kutusuna dokunup "Sayfayı aç". Aynı alt sayfanın birden çok kopyası ayrı sayfa olarak
+    (kendi referanslarıyla) görünür.
+  - **Netler:** KiCad'in bağlantı kurallarıyla bütün hiyerarşi boyunca çıkarılır (teller, bağlantı
+    noktaları, etiketler, güç sembolleri, sayfa pini ↔ hiyerarşik etiket, vektör ve grup
+    veriyolları, bus alias'ları) ve KiCad gibi adlandırılır. Bir öğeye dokununca bilgisi, netini
+    vurgulama ve netin devam ettiği diğer sayfalara atlama.
+  - **Arama:** bütün sayfalardaki semboller ve netler.
+  - **Kart ↔ şema:** klasörde ikisi de varsa araç çubuğundan geçilir; karttaki düzenlemeler korunur.
 - **11 dil:** Türkçe, İngilizce, Almanca, Fransızca, İspanyolca, İtalyanca, Fince, Rusça, Japonca,
   Korece, Çince (basitleştirilmiş). Uygulama cihazın diline göre açılır; listede olmayan dillerde
   İngilizce başlar. Bilgi kartındaki öğe açıklamaları ve hata mesajları da çevrilidir.
 - Kart bilgisi ekranı (ölçüler, eleman sayıları, KiCad sürümü).
-- Uygulamanın içinde iki örnek kart (KiCad demolarından).
+- Uygulamanın içinde iki örnek kart ve bir örnek şema (KiCad demolarından).
 
 ## iPad'e kurulum (Mac gerekmez)
 
@@ -136,6 +152,11 @@ Dosyayı **Aç** düğmesiyle (Dosyalar, iCloud Drive, OneDrive, AirDrop ile gel
 Dosyalar uygulamasında bir `.kicad_pcb` dosyasını paylaş menüsünden Netloom'a gönderebilirsin.
 Gerber setleri için aynı düğmeyle dosyaların hepsini birden, klasörlerini ya da ZIP'lerini seç.
 
+Şemalar için en iyisi **proje klasörünü** seçmek: bütün alt sayfalar ve (varsa) kart birlikte
+açılır, araç çubuğunda **Kart / Şema** geçişi belirir. Tek bir `.kicad_sch` dosyası da açılır, ama
+iPadOS başka dosyalara izin vermediği için yalnız o sayfa görünür. Şemada sol üstteki yığın simgesi
+sayfaları listeler; sayfa kutusuna dokunup **Sayfayı aç**, geri dönmek için **Üst sayfa**.
+
 ## Mimari
 
 ```
@@ -157,10 +178,15 @@ core/            Taşınabilir C++17 çekirdek (iOS, Linux, Windows, macOS'ta de
   src/drc.*          Tasarım kontrolü (KiCad'in kural anlamlarıyla), .kicad_pro kuralları
   src/fab.*          Gerber X2, Excellon, BOM, dizgi dosyası, ZIP
   src/gerber.*       Gerber / Excellon / ZIP okuyucu → yalnız görüntülenen kart
+  src/sch_parser.*   .kicad_sch → şema modeli, sayfa hiyerarşisi (KiCad 6 … 10)
+  src/sch_mesh.*     Şema sayfası → üçgen ağları (KiCad'in sembol, pin, etiket ve antet kuralları)
+  src/sch_connectivity.* Şema netleri: KiCad'in bağlantı motorunun kuralları (adalar, ad
+                     iddiaları, sayfa / genel / port kapsamları, veriyolu üyeleri)
+  src/sch_pick.*     Şemada seçim (çizilen üçgenlerle), açıklamalar, vurgulama
   include/kpcore.h   Swift'in kullandığı düz C arayüzü
 App/             SwiftUI arayüz + Metal çizici
 tools/kpcli.cpp  Masaüstü test aracı: istatistik, PNG çıktı (Metal çiziciyi taklit eder)
-samples/         Örnek kartlar
+samples/         Örnek kartlar ve şema
 project.yml      XcodeGen proje tanımı (Xcode projesi CI'da üretilir)
 ```
 
@@ -184,6 +210,10 @@ cmake --build build
 ./build/kpcli drc samples/pic_programmer.kicad_pcb                           # tasarım kontrolü
 ./build/kpcli fab samples/pic_programmer.kicad_pcb out/                      # Gerber, delik, BOM, CPL, ZIP
 ./build/kpcli render out/ gerber.png 1600                                    # Gerber klasörü, ZIP veya tek dosya
+./build/kpcli render samples/pic_programmer.kicad_sch sch.png 1600 --sheet 1  # şemanın 2. sayfası
+./build/kpcli sheets samples/pic_programmer.kicad_sch                        # sayfa hiyerarşisi
+./build/kpcli netlist samples/pic_programmer.kicad_sch                       # netler ve pinleri
+./build/kpcli root path/to/project/                                          # kök sayfa tahmini
 ctest --test-dir build
 ```
 
@@ -205,6 +235,14 @@ Doğrulama (KiCad 7'nin kendi Python API'si referans alınarak):
 - **Üretim dosyaları:** bakır, maske, pasta, kart kenarı ve delik dosyaları `kicad-cli`'nin
   çıktısıyla piksel piksel karşılaştırıldı (gerbv ile rasterleştirilerek): aynı; maskede küçük
   yaklaşıklık, serigrafide yalnız yazı tipi glif farkı. Dizgi dosyası 305 elemanda aynı.
+- **Şema çizimi:** KiCad 7'nin okuyabildiği 163 sayfa `kicad-cli sch export svg` çıktısıyla piksel
+  maskesi olarak karşılaştırıldı: medyan %2,6 eksik, %0,4 fazla mürekkep (fark çoğunlukla yazı tipi).
+  482 şema dosyası ASan altında hatasız açılıp her noktasında seçildi.
+- **Şema netleri:** KiCad deposundaki 23 referans netlistin 22'si birebir aynı (kalan tek fark
+  referans dosyadaki eski tarz bir net adı); KiCad 7'nin `kicad-cli sch export netlist`
+  çıktısıyla 112 şemada 2082 net aynı. Kalan farklar KiCad 7'ye özgü: ad verilmemiş (R?)
+  semboller, paylaşılan alt sayfalarda sıraya bağlı ad seçimi ve KiCad 7'nin hiyerarşiden geçen
+  veriyolu üyelerini bağlamaması (güncel KiCad bağlıyor).
 - **Gerber okuyucu:** KiCad'in kendi Gerber'leri (X2, X2'siz, 4.5/4.6 hassasiyet, makrolu/makrosuz,
   Protel uzantıları; mm/inç, LZ/TZ/ondalık delik dosyaları) okunup yeniden yazıldı ve orijinaliyle
   karşılaştırıldı: serigrafi, kenar ve delikler birebir, bakır/maske/pasta yalnız tek piksellik
@@ -221,6 +259,17 @@ Arayüz metinleri kaynak kodda İngilizcedir; çeviriler tek bir tabloda durur:
   denetler; CI bunu her derlemede çalıştırır.
 - Çekirdek metinlerini masaüstünde denemek için:
   `KPCLI_STRINGS=App/Localization/tr.lproj/Core.strings ./build/kpcli pick ...`
+- İkinci görüş için `tools/i18n/deepseek_review.py` çevirileri DeepSeek'e inceletip yalnız
+  düzeltmeleri (gerekçeleriyle) yazar. GitHub'da "Translation review (DeepSeek)" iş akışı
+  (`DEEPSEEK_API_KEY` sırrı gerekir) ya da yerelde OpenAI uyumlu bir ağ geçidiyle, örneğin
+  OmniRoute (PowerShell):
+
+  ```powershell
+  $env:OMNIROUTE_API_KEY = "<OmniRoute panelindeki anahtar>"
+  python tools\i18n\deepseek_review.py --base-url http://localhost:20128/v1 `
+      --key-env OMNIROUTE_API_KEY --model <DeepSeek model kimliği> --report review.md
+  python tools\i18n\generate.py
+  ```
 
 ### Mac'te derlemek (isteğe bağlı)
 
@@ -235,7 +284,7 @@ open Netloom.xcodeproj
 - ~~Faz 3: eleman seçme ve bilgi, net vurgulama, arama, ölçüm aracı, pad/net adları~~ ✓
 - ~~Faz 4: düzenleme ve kaydetme (taşıma, döndürme, silme, alanlar, ratsnest)~~ ✓
 - ~~Faz 5: kalemle pist ve via çizme, DRC, üretim dosyaları (Gerber/Excellon/BOM/CPL), Gerber görüntüleyici~~ ✓
-- Faz 6: şematik görüntüleyici (`.kicad_sch`)
+- ~~Faz 6: şematik görüntüleyici (`.kicad_sch`)~~ ✓
 - Faz 7: şematik düzenleme ve PCB'ye aktarma (netlist güncelleme)
 - Faz 8: sıfırdan proje: kart kenarı, footprint kütüphanesi, yerleştirme
 
