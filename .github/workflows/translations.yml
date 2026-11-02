@@ -1,0 +1,66 @@
+name: Translation review (DeepSeek)
+
+# Manual run: Actions > "Translation review (DeepSeek)" > Run workflow.
+# Needs the repository secret DEEPSEEK_API_KEY. The corrections land in a pull request
+# (or, if Actions may not open pull requests in this repository, in a branch) for review.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: DeepSeek model
+        default: deepseek-v4-pro
+      languages:
+        description: Languages, comma separated (tr,de,fr,es,it,fi,ru,ja,ko,zh-Hans); empty = all
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask DeepSeek
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          python3 tools/i18n/deepseek_review.py --model "${{ inputs.model }}" \
+            --languages "${{ inputs.languages }}" --report translation-review.md
+          cat translation-review.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Regenerate and check the string tables
+        run: |
+          python3 tools/i18n/generate.py
+          python3 tools/i18n/generate.py --check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: translation-review
+          path: translation-review.md
+
+      - name: Push a branch and open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="translations/deepseek-${{ github.run_number }}"
+          git checkout -b "$branch"
+          git add tools/i18n App/Localization
+
+          if git diff --cached --quiet; then
+            echo "No changes suggested."
+            exit 0
+          fi
+
+          git commit -qm "Translations reviewed by DeepSeek (${{ inputs.model }})"
+          git push -q origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "Translation review by DeepSeek (${{ inputs.model }})" \
+            --body-file translation-review.md \
+            || echo "Could not open a pull request; the changes are in branch $branch."
