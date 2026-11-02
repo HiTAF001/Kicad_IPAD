@@ -359,6 +359,27 @@ int SchItemNet( const Schematic& aSch, int aSheet, ItemType aType, int aIndex )
 
     switch( aType )
     {
+    case ItemType::SCH_SYMBOL:
+    {
+        // a power symbol stands for its net
+        if( aIndex < 0 || aIndex >= (int) sc.symbols.size() )
+            return -1;
+
+        const LibSymbol* lib = aSch.Lib( sc, sc.symbols[(size_t) aIndex] );
+
+        if( !lib || !lib->power )
+            return -1;
+
+        const std::vector<int> base = SchematicPinBase( aSch, sc );
+
+        for( int f = base[(size_t) aIndex]; f < base[(size_t) aIndex + 1]; ++f )
+        {
+            if( at( sn->pin, f ) >= 0 )
+                return at( sn->pin, f );
+        }
+
+        return -1;
+    }
     case ItemType::SCH_PIN: return at( sn->pin, aIndex );
     case ItemType::SCH_WIRE: return at( sn->wire, aIndex );
     case ItemType::SCH_JUNCTION: return at( sn->junction, aIndex );
@@ -581,7 +602,10 @@ std::string SchItemInfo( const Schematic& aSch, int aSheet, ItemType aType, int 
         info.add( "Library", sym.libId );
 
         if( lib && lib->power )
+        {
             info.add( "Type", Tr( "Power symbol" ) );
+            info.add( "Net", netLabel( aSch, net ) );
+        }
 
         if( lib && lib->unitCount > 1 )
         {
@@ -1030,6 +1054,27 @@ void SchHighlightRanges( const Schematic& aSch, int aSheet, const Mesh& aMesh, I
         each( sn->sheetPin, ItemType::SCH_SHEET_PIN, same );
         each( sn->noConnect, ItemType::SCH_NOTE, [&]( int i ) { return noteIndex( sc, NoteRef::NOCONNECT, i ); } );
         each( sn->busEntry, ItemType::SCH_NOTE, [&]( int i ) { return noteIndex( sc, NoteRef::BUSENTRY, i ); } );
+
+        // power symbols are drawn as the net's name: they light up with it
+        const std::vector<int> base = SchematicPinBase( aSch, sc );
+
+        for( size_t s = 0; s < sc.symbols.size(); ++s )
+        {
+            const LibSymbol* lib = aSch.Lib( sc, sc.symbols[s] );
+
+            if( !lib || !lib->power )
+                continue;
+
+            for( int f = base[s]; f < base[s + 1]; ++f )
+            {
+                if( f < (int) sn->pin.size() && sn->pin[(size_t) f] == aNet )
+                {
+                    itemRanges( aMesh, ItemType::SCH_SYMBOL, (int) s, aOut );
+                    break;
+                }
+            }
+        }
+
         return;
     }
 
