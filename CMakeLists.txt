@@ -24,6 +24,8 @@ add_library( kpcore STATIC
     core/src/fab.cpp
     core/src/route.cpp
     core/src/gerber.cpp
+    core/src/sch_parser.cpp
+    core/src/sch_mesh.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
 )

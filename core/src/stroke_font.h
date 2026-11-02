@@ -53,6 +53,10 @@ public:
     void Layout( const std::string& aUtf8, const TextLayout& aLayout,
                  std::vector<Path>& aStrokes ) const;
 
+    /// Size of the text block (widest line, total height) as Layout would place it, before
+    /// rotation. Height is sizeY * 1.17 for the first line plus the interline for the others.
+    Pt Extents( const std::string& aUtf8, const TextLayout& aLayout ) const;
+
 private:
     StrokeFont();
 

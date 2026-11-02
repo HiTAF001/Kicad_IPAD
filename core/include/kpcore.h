@@ -49,7 +49,14 @@ enum
     KP_ITEM_FOOTPRINT = 5,
     KP_ITEM_ZONE = 6,
     KP_ITEM_SHAPE = 7,
-    KP_ITEM_TEXT = 8
+    KP_ITEM_TEXT = 8,
+    KP_ITEM_SCH_SYMBOL = 9,
+    KP_ITEM_SCH_PIN = 10,
+    KP_ITEM_SCH_WIRE = 11,
+    KP_ITEM_SCH_JUNCTION = 12,
+    KP_ITEM_SCH_LABEL = 13,
+    KP_ITEM_SCH_SHEET = 14,
+    KP_ITEM_SCH_NOTE = 15
 };
 
 /** Layer slot kinds. */
@@ -165,6 +172,43 @@ void          kp_fab_input_add( kp_fab_input* input, const char* name, const cha
 void          kp_fab_input_free( kp_fab_input* input );
 kp_board*     kp_board_load_fab( const kp_fab_input* input, char* error, size_t error_size );
 int32_t       kp_board_is_fab( const kp_board* board ); /**< 1 = built from fabrication files */
+
+enum
+{
+    KP_KIND_PCB = 0,
+    KP_KIND_GERBER = 1,
+    KP_KIND_SCHEMATIC = 2
+};
+
+int32_t kp_board_kind( const kp_board* board ); /**< KP_KIND_* */
+void    kp_board_background( const kp_board* board, float* rgba ); /**< canvas colour, 4 floats */
+
+/**
+ * Schematics (.kicad_sch, KiCad 6 .. 10). Collect the root file and its sub-sheet files with
+ * kp_fab_input_add (names relative to the project folder), then load one sheet of the
+ * hierarchy. Other sheets of the same schematic are opened without parsing again.
+ */
+typedef struct
+{
+    int32_t parent;      /**< sheet index, -1 for the root */
+    int32_t sheet_item;  /**< index of the sheet box in the parent sheet */
+    int32_t child_count;
+    int32_t depth;
+} kp_sheet_info;
+
+int32_t     kp_data_is_schematic( const char* data, size_t length );
+kp_board*   kp_board_load_sch( const kp_fab_input* files, int32_t root, int32_t sheet, char* error,
+                               size_t error_size );
+kp_board*   kp_board_sch_open_sheet( const kp_board* board, int32_t sheet, char* error, size_t error_size );
+int32_t     kp_sch_sheet_count( const kp_board* board );
+int32_t     kp_sch_current_sheet( const kp_board* board );
+void        kp_sch_sheet_info( const kp_board* board, int32_t sheet, kp_sheet_info* out );
+const char* kp_sch_sheet_name( const kp_board* board, int32_t sheet ); /**< "" for the root */
+const char* kp_sch_sheet_page( const kp_board* board, int32_t sheet );
+const char* kp_sch_sheet_file( const kp_board* board, int32_t sheet );
+int32_t     kp_sch_sheet_for_item( const kp_board* board, int32_t sheet_item ); /**< child sheet, -1 */
+int32_t     kp_sch_missing_count( const kp_board* board );
+const char* kp_sch_missing_file( const kp_board* board, int32_t index );
 
 void kp_board_free( kp_board* board );
 

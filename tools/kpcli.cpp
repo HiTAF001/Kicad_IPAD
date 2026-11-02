@@ -57,6 +57,53 @@ static bool readFile( const char* aPath, std::string& aOut )
 }
 
 
+static int g_sheet = 0; // schematic sheet to open (--sheet N)
+
+/// A schematic and every .kicad_sch file below its folder (candidates for its sub-sheets).
+static kp_board* loadSchematic( const char* aPath )
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path        root = fs::absolute( aPath, ec );
+    fs::path        dir = root.parent_path();
+    kp_fab_input*   in = kp_fab_input_new();
+    std::string     data;
+    int             rootIndex = 0, count = 0;
+
+    if( readFile( root.string().c_str(), data ) )
+    {
+        kp_fab_input_add( in, root.filename().string().c_str(), data.data(), data.size() );
+        ++count;
+    }
+
+    for( auto it = fs::recursive_directory_iterator( dir, ec ); it != fs::recursive_directory_iterator(); it.increment( ec ) )
+    {
+        if( ec || it.depth() > 3 )
+            continue;
+
+        const fs::path& p = it->path();
+
+        if( p.extension() != ".kicad_sch" || fs::equivalent( p, root, ec ) )
+            continue;
+
+        if( readFile( p.string().c_str(), data ) )
+        {
+            kp_fab_input_add( in, fs::relative( p, dir, ec ).generic_string().c_str(), data.data(), data.size() );
+            ++count;
+        }
+    }
+
+    char      err[512] = { 0 };
+    kp_board* b = count ? kp_board_load_sch( in, rootIndex, g_sheet, err, sizeof( err ) ) : nullptr;
+    kp_fab_input_free( in );
+
+    if( !b )
+        fprintf( stderr, "%s: %s\n", aPath, err );
+
+    return b;
+}
+
+
 /// A .kicad_pcb, or fabrication files: one Gerber / drill / zip file, or a folder of them.
 static kp_board* load( const char* aPath )
 {
@@ -99,6 +146,9 @@ static kp_board* load( const char* aPath )
     }
 
     kp_board* b = nullptr;
+
+    if( kp_data_is_schematic( data.data(), data.size() ) )
+        return loadSchematic( aPath );
 
     if( kp_data_is_fab( data.data(), data.size() ) )
     {
@@ -297,6 +347,8 @@ static int cmdRender( int argc, char** argv )
             labels = false;
         else if( a == "--no-ratsnest" )
             ratsnest = false;
+        else if( a == "--sheet" && i + 1 < argc )
+            g_sheet = atoi( argv[++i] );
         else if( a == "--view" && i + 4 < argc )
         {
             haveView = true;
@@ -355,11 +407,14 @@ static int cmdRender( int argc, char** argv )
     R.color.resize( (size_t) R.w * R.h * 3 );
     R.stencil.assign( (size_t) R.w * R.h, 0 );
 
+    float bg[4];
+    kp_board_background( b, bg );
+
     for( size_t i = 0; i < (size_t) R.w * R.h; ++i )
     {
-        R.color[i * 3 + 0] = 0.0f;
-        R.color[i * 3 + 1] = 16 / 255.0f;
-        R.color[i * 3 + 2] = 35 / 255.0f;
+        R.color[i * 3 + 0] = bg[0];
+        R.color[i * 3 + 1] = bg[1];
+        R.color[i * 3 + 2] = bg[2];
     }
 
     double zoom = W / ( x1 - x0 ); // output pixels per mm (what the app calls zoom)
@@ -982,6 +1037,39 @@ static int cmdFab( int argc, char** argv )
 }
 
 
+/// Sheets of a schematic: index, page, path of sheet names.
+static int cmdSheets( const char* aPath )
+{
+    kp_board* b = load( aPath );
+
+    if( !b )
+        return 1;
+
+    int n = kp_sch_sheet_count( b );
+
+    for( int i = 0; i < n; ++i )
+    {
+        std::string path;
+
+        for( int s = i; s > 0; )
+        {
+            kp_sheet_info info;
+            kp_sch_sheet_info( b, s, &info );
+            path = std::string( "/" ) + kp_sch_sheet_name( b, s ) + path;
+            s = info.parent;
+        }
+
+        printf( "%d\t%s\t%s\t%s\n", i, kp_sch_sheet_page( b, i ), path.empty() ? "/" : path.c_str(), kp_sch_sheet_file( b, i ) );
+    }
+
+    for( int i = 0; i < kp_sch_missing_count( b ); ++i )
+        printf( "missing\t%s\n", kp_sch_missing_file( b, i ) );
+
+    kp_board_free( b );
+    return 0;
+}
+
+
 int main( int argc, char** argv )
 {
     loadTranslations();
@@ -994,6 +1082,9 @@ int main( int argc, char** argv )
 
     if( argc >= 3 && !strcmp( argv[1], "drc" ) )
         return cmdDrc( argc - 2, argv + 2 );
+
+    if( argc >= 3 && !strcmp( argv[1], "sheets" ) )
+        return cmdSheets( argv[2] );
 
     if( argc >= 3 && !strcmp( argv[1], "stats" ) )
         return cmdStats( argv[2] );

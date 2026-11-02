@@ -16,6 +16,7 @@
 #include "drc.h"
 #include "fab.h"
 #include "gerber.h"
+#include "schematic.h"
 #include "document.h"
 #include "edit.h"
 #include "geom.h"
@@ -44,6 +45,9 @@ struct kp_board
     int32_t     rangeWholeNet = -1;
     std::vector<float> airwires;   // x1,y1,x2,y2 per airwire
     std::vector<std::string> netDisplay; // net names without KiCad escapes (filled on demand)
+    std::shared_ptr<const kp::Schematic> sch; // schematic boards: the whole hierarchy
+    int                                  sheet = 0;
+    std::string                          schScratch;
     std::vector<int>   docMap;     // parse index -> document item (boards built from a kp_doc)
     const void*        docOwner = nullptr;
     uint64_t           docState = 0;
@@ -89,7 +93,7 @@ static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
 
 /// Load a board with aLoader (which fills kp::Board or throws), then build the mesh, the
 /// connectivity (KiCad boards only) and the statistics.
-static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bool aConnectivity, char* error,
+static kp_board* buildWith( const std::function<void( kp_board& )>& aLoader, bool aConnectivity, char* error,
                             size_t error_size );
 
 static kp_board* buildBoard( const char* data, size_t length, char* error, size_t error_size )
@@ -100,7 +104,7 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
         return nullptr;
     }
 
-    return buildWith( [&]( kp::Board& aBoard ) { kp::LoadBoard( aBoard, data, length ); }, true, error, error_size );
+    return buildWith( [&]( kp_board& aBoard ) { kp::LoadBoard( aBoard.board, data, length ); }, true, error, error_size );
 }
 
 extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error, size_t error_size )
@@ -156,17 +160,216 @@ extern "C" kp_board* kp_board_load_fab( const kp_fab_input* input, char* error, 
         return nullptr;
     }
 
-    return buildWith( [&]( kp::Board& aBoard ) { kp::LoadFabFiles( aBoard, input->files ); }, false, error,
+    return buildWith( [&]( kp_board& aBoard ) { kp::LoadFabFiles( aBoard.board, input->files ); }, false, error,
                       error_size );
 }
 
 extern "C" int32_t kp_board_is_fab( const kp_board* board )
 {
-    return board && board->board.generator == "gerber" ? 1 : 0;
+    return board && !board->sch && board->board.generator == "gerber" ? 1 : 0;
 }
 
 
-static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bool aConnectivity, char* error,
+extern "C" int32_t kp_board_kind( const kp_board* board )
+{
+    if( !board )
+        return KP_KIND_PCB;
+
+    if( board->sch )
+        return KP_KIND_SCHEMATIC;
+
+    return board->board.generator == "gerber" ? KP_KIND_GERBER : KP_KIND_PCB;
+}
+
+
+extern "C" void kp_board_background( const kp_board* board, float* rgba )
+{
+    if( !rgba )
+        return;
+
+    if( board && board->sch )
+    {
+        // KiCad's default schematic paper colour
+        rgba[0] = 245 / 255.0f;
+        rgba[1] = 244 / 255.0f;
+        rgba[2] = 239 / 255.0f;
+        rgba[3] = 1.0f;
+        return;
+    }
+
+    for( int i = 0; i < 4; ++i )
+        rgba[i] = kp::BACKGROUND_COLOR[(size_t) i];
+}
+
+
+extern "C" int32_t kp_data_is_schematic( const char* data, size_t length )
+{
+    return data && kp::LooksLikeSchematic( data, length ) ? 1 : 0;
+}
+
+
+static kp_board* buildSheet( std::shared_ptr<const kp::Schematic> aSch, int32_t aSheet, char* error,
+                             size_t error_size )
+{
+    if( aSheet < 0 || aSheet >= (int32_t) aSch->sheets.size() )
+        aSheet = 0;
+
+    return buildWith(
+            [&]( kp_board& b )
+            {
+                b.sch = aSch;
+                b.sheet = aSheet;
+                b.board = kp::Board();
+                b.board.nets.push_back( std::string() );
+            },
+            false, error, error_size );
+}
+
+
+extern "C" kp_board* kp_board_load_sch( const kp_fab_input* files, int32_t root, int32_t sheet, char* error,
+                                        size_t error_size )
+{
+    if( !files || files->files.empty() || root < 0 || root >= (int32_t) files->files.size() )
+    {
+        copyError( error, error_size, kp::Tr( "The file is empty" ) );
+        return nullptr;
+    }
+
+    auto sch = std::make_shared<kp::Schematic>();
+
+    try
+    {
+        std::vector<kp::SchFile> in;
+
+        for( const kp::FabInput& f : files->files )
+            in.push_back( { f.name, f.data } );
+
+        kp::LoadSchematic( *sch, in, (size_t) root );
+    }
+    catch( const kp::ParseError& e )
+    {
+        copyError( error, error_size, kp::TrF( "The file could not be read: {0}", { e.what() } ) );
+        return nullptr;
+    }
+    catch( const std::bad_alloc& )
+    {
+        copyError( error, error_size, kp::Tr( "Out of memory (the board is too large)" ) );
+        return nullptr;
+    }
+    catch( const std::exception& e )
+    {
+        copyError( error, error_size, kp::TrF( "Error: {0}", { e.what() } ) );
+        return nullptr;
+    }
+
+    return buildSheet( sch, sheet, error, error_size );
+}
+
+
+extern "C" kp_board* kp_board_sch_open_sheet( const kp_board* board, int32_t sheet, char* error, size_t error_size )
+{
+    if( !board || !board->sch )
+    {
+        copyError( error, error_size, kp::Tr( "Not a schematic" ) );
+        return nullptr;
+    }
+
+    return buildSheet( board->sch, sheet, error, error_size );
+}
+
+
+extern "C" int32_t kp_sch_sheet_count( const kp_board* board )
+{
+    return board && board->sch ? (int32_t) board->sch->sheets.size() : 0;
+}
+
+
+extern "C" int32_t kp_sch_current_sheet( const kp_board* board )
+{
+    return board && board->sch ? board->sheet : -1;
+}
+
+
+extern "C" void kp_sch_sheet_info( const kp_board* board, int32_t sheet, kp_sheet_info* out )
+{
+    if( !out )
+        return;
+
+    *out = kp_sheet_info { -1, -1, 0, 0 };
+
+    if( !board || !board->sch || sheet < 0 || sheet >= (int32_t) board->sch->sheets.size() )
+        return;
+
+    const kp::SheetNode& n = board->sch->sheets[(size_t) sheet];
+    out->parent = n.parent;
+    out->sheet_item = n.sheetItem;
+    out->child_count = (int32_t) n.children.size();
+    out->depth = 0;
+
+    for( int p = n.parent; p >= 0; p = board->sch->sheets[(size_t) p].parent )
+        ++out->depth;
+}
+
+
+extern "C" const char* kp_sch_sheet_name( const kp_board* board, int32_t sheet )
+{
+    if( !board || !board->sch || sheet < 0 || sheet >= (int32_t) board->sch->sheets.size() )
+        return "";
+
+    return board->sch->sheets[(size_t) sheet].name.c_str();
+}
+
+
+extern "C" const char* kp_sch_sheet_page( const kp_board* board, int32_t sheet )
+{
+    if( !board || !board->sch || sheet < 0 || sheet >= (int32_t) board->sch->sheets.size() )
+        return "";
+
+    return board->sch->sheets[(size_t) sheet].page.c_str();
+}
+
+
+extern "C" const char* kp_sch_sheet_file( const kp_board* board, int32_t sheet )
+{
+    if( !board || !board->sch || sheet < 0 || sheet >= (int32_t) board->sch->sheets.size() )
+        return "";
+
+    const kp::SheetNode& n = board->sch->sheets[(size_t) sheet];
+    return n.screen >= 0 ? board->sch->screens[(size_t) n.screen].fileName.c_str() : "";
+}
+
+
+extern "C" int32_t kp_sch_sheet_for_item( const kp_board* board, int32_t sheet_item )
+{
+    if( !board || !board->sch )
+        return -1;
+
+    for( int c : board->sch->sheets[(size_t) board->sheet].children )
+    {
+        if( board->sch->sheets[(size_t) c].sheetItem == sheet_item )
+            return c;
+    }
+
+    return -1;
+}
+
+
+extern "C" int32_t kp_sch_missing_count( const kp_board* board )
+{
+    return board && board->sch ? (int32_t) board->sch->missingFiles.size() : 0;
+}
+
+
+extern "C" const char* kp_sch_missing_file( const kp_board* board, int32_t index )
+{
+    if( !board || !board->sch || index < 0 || index >= (int32_t) board->sch->missingFiles.size() )
+        return "";
+
+    return board->sch->missingFiles[(size_t) index].c_str();
+}
+
+
+static kp_board* buildWith( const std::function<void( kp_board& )>& aLoader, bool aConnectivity, char* error,
                             size_t error_size )
 {
     kp_board* b = new( std::nothrow ) kp_board();
@@ -182,11 +385,14 @@ static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bo
         using clock = std::chrono::steady_clock;
         auto t0 = clock::now();
 
-        aLoader( b->board );
+        aLoader( *b );
 
         auto t1 = clock::now();
 
-        kp::BuildMesh( b->board, b->mesh );
+        if( b->sch )
+            kp::BuildSchematicMesh( *b->sch, b->sheet, b->mesh );
+        else
+            kp::BuildMesh( b->board, b->mesh );
 
         auto t2 = clock::now();
 
@@ -232,6 +438,35 @@ static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bo
         o.triangle_count = (int64_t) ( b->mesh.indices.size() / 3 );
         o.parse_ms = std::chrono::duration<double, std::milli>( t1 - t0 ).count();
         o.mesh_ms = std::chrono::duration<double, std::milli>( t2 - t1 ).count();
+
+        if( b->sch )
+        {
+            // schematic: symbols, pins, size of the page
+            const kp::SheetNode& node = b->sch->sheets[(size_t) b->sheet];
+            const kp::SchScreen& sc = b->sch->screens[(size_t) node.screen];
+            o.footprints = (int32_t) sc.symbols.size();
+            o.pads = kp::SchematicPinBase( *b->sch, sc ).back();
+            o.tracks = 0;
+
+            for( const kp::SchLine& l : sc.lines )
+                o.tracks += l.kind == kp::SchLine::WIRE ? 1 : 0;
+
+            o.graphics = (int32_t) ( sc.graphics.size() + sc.texts.size() );
+            o.texts = (int32_t) sc.labels.size();
+            o.copper_layers = 0;
+            o.width_mm = sc.paperW;
+            o.height_mm = sc.paperH;
+            o.file_version = sc.version;
+            o.warning_count = (int32_t) b->sch->warnings.size();
+            const kp::TitleBlock& t = b->sch->screens[0].titleBlock;
+            b->board.generator = sc.generator;
+            b->board.generatorVersion = sc.generatorVersion;
+            b->board.titleBlock["TITLE"] = t.title;
+            b->board.titleBlock["REVISION"] = t.rev;
+            b->board.titleBlock["COMPANY"] = t.company;
+            b->board.titleBlock["ISSUE_DATE"] = t.date;
+            b->board.warnings = b->sch->warnings;
+        }
 
         auto tb = [&]( const char* k ) -> std::string
         {

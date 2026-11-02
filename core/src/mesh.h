@@ -55,6 +55,13 @@ enum class ItemType : uint8_t
     ZONE,
     SHAPE,
     TEXT,
+    SCH_SYMBOL,   ///< schematic: placed symbol (body and fields)
+    SCH_PIN,      ///< schematic: pin, index = flat pin index (see SchematicPinIndex)
+    SCH_WIRE,     ///< schematic: wire, bus or graphic line (SchScreen::lines)
+    SCH_JUNCTION,
+    SCH_LABEL,
+    SCH_SHEET,    ///< schematic: sub-sheet box with its fields and pins
+    SCH_NOTE,     ///< schematic: text, graphic, image, no-connect flag or bus entry
     COUNT
 };
 

@@ -358,7 +358,9 @@ void StrokeFont::Layout( const std::string& aUtf8, const TextLayout& L,
         }
     }
 
-    lines.push_back( cur );
+    // like KiCad's wxStringSplit: a trailing empty line does not count
+    if( !cur.empty() || lines.empty() )
+        lines.push_back( cur );
 
     const double interline = L.sizeY * INTERLINE_PITCH * LEGACY_FACTOR * L.lineSpacing;
 
@@ -398,6 +400,41 @@ void StrokeFont::Layout( const std::string& aUtf8, const TextLayout& L,
 
         drawRuns( runs[i], L.pos + lineOffset, L, &aStrokes );
     }
+}
+
+
+Pt StrokeFont::Extents( const std::string& aUtf8, const TextLayout& L ) const
+{
+    if( aUtf8.empty() )
+        return Pt( 0, 0 );
+
+    std::u32string all = DecodeUtf8( aUtf8 );
+    std::u32string cur;
+    double         width = 0.0;
+    int            lines = 0;
+
+    auto finish = [&]()
+    {
+        std::vector<Run> runs;
+        parseMarkup( cur, runs );
+        width = std::max( width, drawRuns( runs, Pt( 0, 0 ), L, nullptr ) );
+        cur.clear();
+        ++lines;
+    };
+
+    for( char32_t c : all )
+    {
+        if( c == U'\n' )
+            finish();
+        else if( c != U'\r' )
+            cur.push_back( c );
+    }
+
+    if( !cur.empty() || lines == 0 )
+        finish();
+
+    const double interline = L.sizeY * INTERLINE_PITCH * LEGACY_FACTOR * L.lineSpacing;
+    return Pt( width + L.thickness, L.sizeY * 1.17 + ( lines - 1 ) * interline );
 }
 
 } // namespace kp
