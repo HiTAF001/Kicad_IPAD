@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Projektitiedostoa ei voitu lukea ({0}); käytetään piirilevyn omia sääntöjä.";
 "The project file has no board settings; using the board's own rules." = "Projektitiedostossa ei ole piirilevyn asetuksia; käytetään piirilevyn omia sääntöjä.";
 "no net" = "ei nettiä";
+"Unnumbered pad of {0} ({1})" = "Numeroimaton pad, {0} ({1})";
 "Pad {0} of {1} ({2})" = "{1}:n padi {0} ({2})";
 "Via ({0})" = "Via ({0})";
 "Track ({0}) on {1}" = "Johdin ({0}) kerroksella {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "Piirilevyllä ei ole kuparikerroksia.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "Piirilevyllä ei ole ääriviivaa Edge.Cuts-kerroksella; valmistaja ei tiedä, mistä leikata.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Sokeat, haudatut ja mikroviat on lueteltu pinnoitettujen reikien porraustiedostossa; tarkista porausvälit valmistajalta.";
+"The zip archive is damaged" = "ZIP-arkisto on vioittunut";
+"Not a Gerber or drill file: {0}" = "Ei Gerber- eikä poraustiedosto: {0}";
+"No Gerber or drill files found" = "Gerber- tai poraustiedostoja ei löytynyt";
 "The file is empty" = "Tiedosto on tyhjä";
 "Out of memory" = "Muisti ei riitä";
 "The file could not be read: {0}" = "Tiedostoa ei voitu lukea: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Nimiöt ({0})";
 "(no net)" = "(ei nettiä)";
 "All copper ({0})" = "Kaikki kupari ({0})";
+"Drill hole (non-plated)" = "Reikä (pinnoittamaton)";
+"Drill hole (plated)" = "Reikä (pinnoitettu)";
+"Hole" = "Reikä";
+"oval {0}" = "soikea {0}";
+"Position" = "Sijainti";
 "Pad {0}" = "Padi {0}";
 "Net" = "Netti";
 "Pin function" = "Nastan toiminto";
@@ -117,10 +126,7 @@
 "Custom shape" = "Mukautettu muoto";
 "Shape" = "Muoto";
 "Size" = "Koko";
-"Hole" = "Reikä";
-"oval {0}" = "soikea {0}";
 "Angle" = "Kulma";
-"Position" = "Sijainti";
 "Layers" = "Kerrokset";
 "Blind" = "Sokea";
 "Buried" = "Haudattu";

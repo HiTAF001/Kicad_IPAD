@@ -475,16 +475,86 @@ double ShapeDistanceTo( const CuShape& A, const CuShape& B, double aCutoff )
 
 Pt PrimNearPoint( const Prim& A, const Prim& B )
 {
-    Pt pa = corePoint( A ), pb = corePoint( B );
+    // the closest pair of points between the primitives' edges (a point is a zero-length edge)
+    auto edges = []( const Prim& p, std::vector<std::pair<Pt, Pt>>& out )
+    {
+        switch( p.kind )
+        {
+        case Prim::POINT: out.push_back( { p.a, p.a } ); break;
+        case Prim::SEGMENT: out.push_back( { p.a, p.b } ); break;
+        case Prim::CHAIN:
+            for( size_t i = 0; i + 1 < p.poly.size(); ++i )
+                out.push_back( { p.poly[i], p.poly[i + 1] } );
 
-    if( A.kind == Prim::SEGMENT )
-        pa = closestOnSeg( pb, A.a, A.b );
+            break;
+        case Prim::POLYGON:
+            for( size_t i = 0, n = p.poly.size(); i < n; ++i )
+                out.push_back( { p.poly[i], p.poly[( i + 1 ) % n] } );
 
-    if( B.kind == Prim::SEGMENT )
-        pb = closestOnSeg( pa, B.a, B.b );
+            break;
+        }
+    };
 
-    if( A.kind == Prim::SEGMENT )
-        pa = closestOnSeg( pb, A.a, A.b );
+    std::vector<std::pair<Pt, Pt>> ea, eb;
+    edges( A, ea );
+    edges( B, eb );
+
+    // one inside the other polygon: the inner one's own point
+    if( B.kind == Prim::POLYGON && !ea.empty() && PointInPolygon( ea[0].first, B.poly ) )
+        return ea[0].first;
+
+    if( A.kind == Prim::POLYGON && !eb.empty() && PointInPolygon( eb[0].first, A.poly ) )
+        return eb[0].first;
+
+    double best = 1e300;
+    Pt     pa = corePoint( A ), pb = corePoint( B );
+
+    for( const auto& [a1, a2] : ea )
+    {
+        for( const auto& [b1, b2] : eb )
+        {
+            // closest points of two segments: try each end against the other segment
+            const Pt cand[4][2] = { { a1, closestOnSeg( a1, b1, b2 ) },
+                                    { a2, closestOnSeg( a2, b1, b2 ) },
+                                    { closestOnSeg( b1, a1, a2 ), b1 },
+                                    { closestOnSeg( b2, a1, a2 ), b2 } };
+            double   d = SegSegDistance( a1, a2, b1, b2 );
+
+            if( d >= best )
+                continue;
+
+            best = d;
+
+            if( d <= 1e-12 )
+            {
+                // crossing: intersection point, else the touching ends
+                double dx1 = a2.x - a1.x, dy1 = a2.y - a1.y, dx2 = b2.x - b1.x, dy2 = b2.y - b1.y;
+                double den = dx1 * dy2 - dy1 * dx2;
+
+                if( std::fabs( den ) > 1e-18 )
+                {
+                    double t = ( ( b1.x - a1.x ) * dy2 - ( b1.y - a1.y ) * dx2 ) / den;
+                    t = std::max( 0.0, std::min( 1.0, t ) );
+                    pa = pb = Pt( a1.x + dx1 * t, a1.y + dy1 * t );
+                    continue;
+                }
+            }
+
+            double bestPair = 1e300;
+
+            for( const auto& c : cand )
+            {
+                double e = std::hypot( c[0].x - c[1].x, c[0].y - c[1].y );
+
+                if( e < bestPair )
+                {
+                    bestPair = e;
+                    pa = c[0];
+                    pb = c[1];
+                }
+            }
+        }
+    }
 
     return Pt( ( pa.x + pb.x ) / 2, ( pa.y + pb.y ) / 2 );
 }

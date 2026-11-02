@@ -293,7 +293,7 @@ std::string netName( const Board& b, int net )
     if( net <= 0 || net >= (int) b.nets.size() || b.nets[(size_t) net].empty() )
         return Tr( "(no net)" );
 
-    return b.nets[(size_t) net];
+    return DisplayNetName( b.nets[(size_t) net] );
 }
 
 std::string layerName( const Board& b, int l )
@@ -604,7 +604,7 @@ void Pick( const Board& b, const Mesh& m, const Pt& p, double tol, const PickFil
         {
             const Shape& s = b.shapes[i];
 
-            if( !f.layerVisible( s.layer ) || !shapeHit( s, p, tol ) )
+            if( s.clear || !f.layerVisible( s.layer ) || !shapeHit( s, p, tol ) )
                 continue;
 
             if( s.footprint >= 0 )
@@ -779,6 +779,20 @@ std::string ItemInfo( const Board& b, const Mesh& m, ItemType type, int idx )
             const Footprint& F = b.footprints[(size_t) p.footprint];
             ref = F.reference;
             fpLine = F.value.empty() ? F.reference : F.reference + " (" + F.value + ")";
+        }
+
+        if( p.footprint < 0 && p.number.empty() && b.generator == "gerber" )
+        {
+            // a hit from a drill file
+            Info info( p.attr == PadAttr::NPTH ? Tr( "Drill hole (non-plated)" ) : Tr( "Drill hole (plated)" ) );
+
+            if( p.drillOval && std::fabs( p.drill.x - p.drill.y ) > 1e-9 )
+                info.add( "Hole", TrF( "oval {0}", { num( p.drill.x ) + " × " + num( p.drill.y ) + " mm" } ) );
+            else
+                info.add( "Hole", "Ø " + mm( p.drill.x ) );
+
+            info.add( "Position", xy( p.pos ) );
+            return info.text;
         }
 
         std::string title = TrF( "Pad {0}", { ref.empty() ? p.number : ref + "-" + p.number } );

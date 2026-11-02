@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Impossible de lire le fichier projet ({0}) ; les règles de la carte sont utilisées.";
 "The project file has no board settings; using the board's own rules." = "Le fichier projet ne contient pas de réglages de carte ; les règles de la carte sont utilisées.";
 "no net" = "aucun net";
+"Unnumbered pad of {0} ({1})" = "Pastille sans numéro de {0} ({1})";
 "Pad {0} of {1} ({2})" = "Pastille {0} de {1} ({2})";
 "Via ({0})" = "Via ({0})";
 "Track ({0}) on {1}" = "Piste ({0}) sur {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "La carte n'a aucune couche cuivre.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "La carte n'a pas de contour sur Edge.Cuts ; le fabricant ne saura pas où découper.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Les vias borgnes, enterrés et micro-vias figurent dans le fichier de perçage métallisé ; vérifiez les profondeurs avec votre fabricant.";
+"The zip archive is damaged" = "L'archive ZIP est endommagée";
+"Not a Gerber or drill file: {0}" = "Ni un fichier Gerber ni un fichier de perçage : {0}";
+"No Gerber or drill files found" = "Aucun fichier Gerber ou de perçage trouvé";
 "The file is empty" = "Le fichier est vide";
 "Out of memory" = "Mémoire insuffisante";
 "The file could not be read: {0}" = "Impossible de lire le fichier : {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Étiquettes ({0})";
 "(no net)" = "(aucun net)";
 "All copper ({0})" = "Tout le cuivre ({0})";
+"Drill hole (non-plated)" = "Trou (non métallisé)";
+"Drill hole (plated)" = "Trou (métallisé)";
+"Hole" = "Perçage";
+"oval {0}" = "ovale {0}";
+"Position" = "Position";
 "Pad {0}" = "Pastille {0}";
 "Net" = "Net";
 "Pin function" = "Fonction de la broche";
@@ -117,10 +126,7 @@
 "Custom shape" = "Forme personnalisée";
 "Shape" = "Forme";
 "Size" = "Taille";
-"Hole" = "Perçage";
-"oval {0}" = "ovale {0}";
 "Angle" = "Angle";
-"Position" = "Position";
 "Layers" = "Couches";
 "Blind" = "Borgne";
 "Buried" = "Enterré";

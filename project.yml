@@ -17,7 +17,7 @@ settings:
     GCC_ENABLE_CPP_EXCEPTIONS: YES
     GCC_ENABLE_CPP_RTTI: YES
     ENABLE_BITCODE: NO
-    MARKETING_VERSION: "0.4.0"
+    MARKETING_VERSION: "0.5.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -30,6 +30,8 @@ targets:
       - path: core/include
       - path: samples
         buildPhase: resources
+    dependencies:
+      - sdk: libz.tbd
     settings:
       base:
         PRODUCT_NAME: Netloom
@@ -90,9 +92,49 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension:
                 - kicad_pcb
+          - UTTypeIdentifier: com.seyhanlabs.netloom.gerber
+            UTTypeDescription: Gerber file
+            UTTypeConformsTo:
+              - public.data
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - gbr
+                - ger
+                - gbx
+                - gtl
+                - gbl
+                - gts
+                - gbs
+                - gto
+                - gbo
+                - gtp
+                - gbp
+                - gko
+                - gm1
+                - pho
+                - art
+          - UTTypeIdentifier: com.seyhanlabs.netloom.drill
+            UTTypeDescription: Excellon drill file
+            UTTypeConformsTo:
+              - public.data
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - drl
+                - xln
+                - exc
+                - ncd
         CFBundleDocumentTypes:
           - CFBundleTypeName: KiCad PCB
             CFBundleTypeRole: Editor
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - org.kicad.pcb
+          - CFBundleTypeName: Gerber and drill files
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.seyhanlabs.netloom.gerber
+              - com.seyhanlabs.netloom.drill
+              - public.zip-archive

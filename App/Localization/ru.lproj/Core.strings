@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Не удалось прочитать файл проекта ({0}); используются правила самой платы.";
 "The project file has no board settings; using the board's own rules." = "В файле проекта нет настроек платы; используются правила самой платы.";
 "no net" = "без цепи";
+"Unnumbered pad of {0} ({1})" = "Площадка без номера, {0} ({1})";
 "Pad {0} of {1} ({2})" = "Площадка {0} компонента {1} ({2})";
 "Via ({0})" = "Переходное отверстие ({0})";
 "Track ({0}) on {1}" = "Дорожка ({0}) на {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "На плате нет слоёв меди.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "У платы нет контура на Edge.Cuts; производитель не будет знать, где резать.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Глухие, скрытые и микропереходы перечислены в файле металлизированных отверстий; уточните интервалы сверления у производителя.";
+"The zip archive is damaged" = "ZIP-архив повреждён";
+"Not a Gerber or drill file: {0}" = "Не файл Gerber и не файл сверловки: {0}";
+"No Gerber or drill files found" = "Файлы Gerber или сверловки не найдены";
 "The file is empty" = "Файл пуст";
 "Out of memory" = "Недостаточно памяти";
 "The file could not be read: {0}" = "Не удалось прочитать файл: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Подписи ({0})";
 "(no net)" = "(нет цепи)";
 "All copper ({0})" = "Все слои меди ({0})";
+"Drill hole (non-plated)" = "Отверстие (неметаллизированное)";
+"Drill hole (plated)" = "Отверстие (металлизированное)";
+"Hole" = "Отверстие";
+"oval {0}" = "овальное {0}";
+"Position" = "Положение";
 "Pad {0}" = "Площадка {0}";
 "Net" = "Цепь";
 "Pin function" = "Функция вывода";
@@ -117,10 +126,7 @@
 "Custom shape" = "Произвольная форма";
 "Shape" = "Форма";
 "Size" = "Размер";
-"Hole" = "Отверстие";
-"oval {0}" = "овальное {0}";
 "Angle" = "Угол";
-"Position" = "Положение";
 "Layers" = "Слои";
 "Blind" = "Глухое";
 "Buried" = "Скрытое";

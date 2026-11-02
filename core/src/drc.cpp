@@ -474,7 +474,7 @@ DesignRules ResolveRules( const Board& b, const char* aProject, size_t aProjectL
 std::string DescribeItem( const Board& b, const DrcRef& r )
 {
     auto netName = [&]( int n ) -> std::string
-    { return n > 0 && n < (int) b.nets.size() ? b.nets[(size_t) n] : std::string( Tr( "no net" ) ); };
+    { return n > 0 && n < (int) b.nets.size() ? DisplayNetName( b.nets[(size_t) n] ) : std::string( Tr( "no net" ) ); };
 
     auto layerName = [&]( int l ) -> std::string
     { return l >= 0 && l < (int) b.layers.size() ? b.layers[(size_t) l].display : std::string( "?" ); };
@@ -488,6 +488,9 @@ std::string DescribeItem( const Board& b, const DrcRef& r )
 
         const Pad&  p = b.pads[(size_t) r.index];
         std::string ref = p.footprint >= 0 ? b.footprints[(size_t) p.footprint].reference : std::string();
+        if( p.number.empty() )
+            return TrF( "Unnumbered pad of {0} ({1})", { ref, netName( p.net ) } );
+
         return TrF( "Pad {0} of {1} ({2})", { p.number, ref, netName( p.net ) } );
     }
     case ItemType::VIA:
@@ -575,9 +578,9 @@ std::string DrcMessage( const Board& b, const DrcItem& it )
     case DrcCode::SHORTING_ITEMS:
     case DrcCode::UNCONNECTED_ITEMS:
         if( it.netA > 0 && it.netB > 0 && it.netA != it.netB )
-            detail = TrF( "nets {0} and {1}", { b.nets[(size_t) it.netA], b.nets[(size_t) it.netB] } );
+            detail = TrF( "nets {0} and {1}", { DisplayNetName( b.nets[(size_t) it.netA] ), DisplayNetName( b.nets[(size_t) it.netB] ) } );
         else if( it.netA > 0 )
-            detail = TrF( "net {0}", { b.nets[(size_t) it.netA] } );
+            detail = TrF( "net {0}", { DisplayNetName( b.nets[(size_t) it.netA] ) } );
 
         break;
 
@@ -775,6 +778,21 @@ private:
     {
         double best = 1e300;
         Pt     pos = Pt( ( a.box.minX + a.box.maxX ) / 2, ( a.box.minY + a.box.maxY ) / 2 );
+
+        // inside a zone fill (known by its outline only): mark the item itself
+        Pt bc( ( b.box.minX + b.box.maxX ) / 2, ( b.box.minY + b.box.maxY ) / 2 );
+
+        for( const AreaIndex* area : b.areas )
+        {
+            if( area->Contains( pos ) )
+                return pos;
+        }
+
+        for( const AreaIndex* area : a.areas )
+        {
+            if( area->Contains( bc ) )
+                return bc;
+        }
 
         for( const Prim& p : a.prims )
         {

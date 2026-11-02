@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Die Projektdatei konnte nicht gelesen werden ({0}); es werden die Regeln der Platine verwendet.";
 "The project file has no board settings; using the board's own rules." = "Die Projektdatei enthält keine Platineneinstellungen; es werden die Regeln der Platine verwendet.";
 "no net" = "kein Netz";
+"Unnumbered pad of {0} ({1})" = "Pad ohne Nummer von {0} ({1})";
 "Pad {0} of {1} ({2})" = "Pad {0} von {1} ({2})";
 "Via ({0})" = "Via ({0})";
 "Track ({0}) on {1}" = "Leiterbahn ({0}) auf {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "Die Platine hat keine Kupferlagen.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "Die Platine hat keinen Umriss auf Edge.Cuts; der Hersteller weiß nicht, wo er schneiden soll.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Blinde, vergrabene und Micro-Vias stehen in der Bohrdatei für durchkontaktierte Bohrungen; klären Sie die Bohrtiefen mit Ihrem Hersteller.";
+"The zip archive is damaged" = "Das ZIP-Archiv ist beschädigt";
+"Not a Gerber or drill file: {0}" = "Keine Gerber- oder Bohrdatei: {0}";
+"No Gerber or drill files found" = "Keine Gerber- oder Bohrdateien gefunden";
 "The file is empty" = "Die Datei ist leer";
 "Out of memory" = "Nicht genügend Speicher";
 "The file could not be read: {0}" = "Die Datei konnte nicht gelesen werden: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Beschriftungen ({0})";
 "(no net)" = "(kein Netz)";
 "All copper ({0})" = "Alle Kupferlagen ({0})";
+"Drill hole (non-plated)" = "Bohrung (nicht durchkontaktiert)";
+"Drill hole (plated)" = "Bohrung (durchkontaktiert)";
+"Hole" = "Bohrung";
+"oval {0}" = "oval {0}";
+"Position" = "Position";
 "Pad {0}" = "Pad {0}";
 "Net" = "Netz";
 "Pin function" = "Pinfunktion";
@@ -117,10 +126,7 @@
 "Custom shape" = "Benutzerdefinierte Form";
 "Shape" = "Form";
 "Size" = "Größe";
-"Hole" = "Bohrung";
-"oval {0}" = "oval {0}";
 "Angle" = "Winkel";
-"Position" = "Position";
 "Layers" = "Lagen";
 "Blind" = "Blind";
 "Buried" = "Vergraben";

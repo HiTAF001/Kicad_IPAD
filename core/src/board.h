@@ -124,6 +124,7 @@ struct Shape
     double    radius = 0.0;    ///< rectangle corner radius
     bool      filled = false;
     bool      decoration = false; ///< part of a dimension or target marker, not real geometry
+    bool      clear = false;      ///< Gerber clear polarity: erases what is under it on its layer
     int       layer = -1;
     int       footprint = -1;
     int         docItem = -1; ///< index of the top-level file item this came from
@@ -379,6 +380,17 @@ public:
     std::unordered_map<int, int>         netByNumber;
     std::unordered_map<std::string, int> netByName;
 };
+
+/// Kind, side, colour and draw order of a canonical KiCad layer name ("F.Cu", "In2.Cu",
+/// "B.SilkS", "Edge.Cuts", "User.1" ...). Returns false for unknown names.
+bool DescribeLayer( const std::string& aCanonical, Layer& aLayer );
+
+/// A net name as people read it: KiCad's escapes ({slash}, {colon}, ...) turned back into
+/// the characters they stand for.
+std::string DisplayNetName( const std::string& aName );
+
+/// Order the copper layers (F.Cu first, B.Cu last) and fill copperStack / copperOrder.
+void FinishLayerStack( Board& aBoard );
 
 /// Parse a .kicad_pcb (KiCad 4 .. 11) from memory. Throws kp::ParseError on fatal errors.
 void LoadBoard( Board& aBoard, const char* aData, size_t aLen );

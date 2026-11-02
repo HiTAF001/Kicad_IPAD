@@ -660,7 +660,7 @@ RouteResult RoutePencil( const Board& b, const CopperIndex& idx, const RouteRequ
     {
         R.blocked = true;
         R.message = TrF( "This would connect {0} and {1}",
-                         { b.nets[(size_t) R.start.net], b.nets[(size_t) R.end.net] } );
+                         { DisplayNetName( b.nets[(size_t) R.start.net] ), DisplayNetName( b.nets[(size_t) R.end.net] ) } );
     }
 
     R.net = R.start.net > 0 ? R.start.net : R.end.net;
@@ -1110,7 +1110,7 @@ RouteResult RoutePencil( const Board& b, const CopperIndex& idx, const RouteRequ
         }
 
         R.blocked = true;
-        R.message = other > 0 ? TrF( "This track would touch {0}", { b.nets[(size_t) other] } )
+        R.message = other > 0 ? TrF( "This track would touch {0}", { DisplayNetName( b.nets[(size_t) other] ) } )
                               : std::string( Tr( "This track would touch other copper" ) );
     }
 

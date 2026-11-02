@@ -527,6 +527,19 @@ private:
     Mesh&                m_mesh;
     std::vector<Acc>     m_acc;
     std::vector<Pending> m_pending;
+
+    /// Layers with clear polarity shapes (Gerber): their graphics are drawn last shape first
+    /// in runs of one polarity, appended to m_acc after the (slot, kind) accumulators. With
+    /// the per-slot stencil ("each pixel once") the later shape wins, and a clear run drawn
+    /// with a fully transparent colour erases what earlier shapes would have painted.
+    struct Run
+    {
+        int  slot;
+        bool clear;
+    };
+
+    size_t           m_baseAcc = 0;
+    std::vector<Run> m_runs; ///< m_acc[m_baseAcc + k] holds run k
     std::vector<int>     m_labelSlot;
     size_t               m_labelTriangles = 0;
     int                  m_wallSlot = 0;
@@ -1246,15 +1259,69 @@ void Builder::Build()
     }
 
     // ---- graphics
-    for( const Shape& s : m_board.shapes )
     {
-        beginItem( ItemType::SHAPE );
+        std::vector<char> polarity( m_board.layers.size(), 0 );
 
-        if( s.layer >= 0 )
-            record( s.layer, ItemKind::GRAPHIC, [&]( Acc& a ) { addShape( a, s ); } );
+        for( const Shape& s : m_board.shapes )
+        {
+            if( s.clear && s.layer >= 0 )
+                polarity[(size_t) s.layer] = 1;
+        }
+
+        // layers with clear shapes: triangulate last shape first into polarity runs
+        std::vector<Pending> drawn( m_board.shapes.size(), Pending { 0, 0, 0 } );
+        m_baseAcc = m_acc.size();
+
+        for( size_t L = 0; L < polarity.size(); ++L )
+        {
+            if( !polarity[L] )
+                continue;
+
+            int runIdx = -1;
+
+            for( size_t i = m_board.shapes.size(); i-- > 0; )
+            {
+                const Shape& s = m_board.shapes[i];
+
+                if( s.layer != (int) L )
+                    continue;
+
+                if( runIdx < 0 || m_runs[(size_t) runIdx].clear != s.clear )
+                {
+                    m_runs.push_back( { (int) L, s.clear } );
+                    m_acc.emplace_back();
+                    runIdx = (int) m_runs.size() - 1;
+                }
+
+                size_t   id = m_baseAcc + (size_t) runIdx;
+                uint32_t s0 = (uint32_t) m_acc[id].i.size();
+                addShape( m_acc[id], s );
+                drawn[i] = { id, s0, (uint32_t) m_acc[id].i.size() - s0 };
+            }
+        }
+
+        for( size_t i = 0; i < m_board.shapes.size(); ++i )
+        {
+            const Shape& s = m_board.shapes[i];
+            beginItem( ItemType::SHAPE );
+
+            if( s.layer < 0 )
+                continue;
+
+            if( polarity[(size_t) s.layer] )
+            {
+                // clear shapes are not items: nothing to highlight
+                if( !s.clear && drawn[i].count )
+                    m_pending.push_back( drawn[i] );
+            }
+            else
+            {
+                record( s.layer, ItemKind::GRAPHIC, [&]( Acc& a ) { addShape( a, s ); } );
+            }
+        }
+
+        endType( ItemType::SHAPE );
     }
-
-    endType( ItemType::SHAPE );
 
     // ---- text
     for( size_t i = 0; i < m_board.texts.size(); ++i )
@@ -1309,10 +1376,26 @@ void Builder::Build()
 
     for( int slot : order )
     {
+        // accumulators of this slot in draw order; polarity runs go with the graphics
+        std::vector<std::pair<size_t, ItemKind>> ids;
+
         for( ItemKind k : kindOrder )
         {
-            size_t id = accId( slot, k );
-            Acc&   a = m_acc[id];
+            ids.push_back( { accId( slot, k ), k } );
+
+            if( k == ItemKind::GRAPHIC )
+            {
+                for( size_t r = 0; r < m_runs.size(); ++r )
+                {
+                    if( m_runs[r].slot == slot )
+                        ids.push_back( { m_baseAcc + r, k } );
+                }
+            }
+        }
+
+        for( const auto& [id, k] : ids )
+        {
+            Acc& a = m_acc[id];
 
             if( a.i.empty() )
                 continue;
@@ -1321,6 +1404,9 @@ void Builder::Build()
             g.slot = slot;
             g.kind = k;
             g.color = m_mesh.slots[slot].color;
+
+            if( id >= m_baseAcc && m_runs[id - m_baseAcc].clear )
+                g.color = { 0.0f, 0.0f, 0.0f, 0.0f }; // paints nothing, but claims the pixels
 
             if( k == ItemKind::WALL_PTH )
                 g.color = wallPth;
@@ -1363,8 +1449,17 @@ void Builder::Build()
         ItemRange r;
         r.start = groupStart[p.acc] + p.start;
         r.count = p.count;
-        r.slot = (int32_t) ( p.acc / (size_t) ItemKind::COUNT );
-        r.kind = (uint8_t) ( p.acc % (size_t) ItemKind::COUNT );
+
+        if( p.acc >= m_baseAcc )
+        {
+            r.slot = (int32_t) m_runs[p.acc - m_baseAcc].slot;
+            r.kind = (uint8_t) ItemKind::GRAPHIC;
+        }
+        else
+        {
+            r.slot = (int32_t) ( p.acc / (size_t) ItemKind::COUNT );
+            r.kind = (uint8_t) ( p.acc % (size_t) ItemKind::COUNT );
+        }
         m_mesh.ranges.push_back( r );
     }
 

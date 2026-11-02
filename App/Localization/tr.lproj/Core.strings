@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Proje dosyası okunamadı ({0}); kartın kendi kuralları kullanılıyor.";
 "The project file has no board settings; using the board's own rules." = "Proje dosyasında kart ayarları yok; kartın kendi kuralları kullanılıyor.";
 "no net" = "net yok";
+"Unnumbered pad of {0} ({1})" = "{0} numarasız pad ({1})";
 "Pad {0} of {1} ({2})" = "{1} pad {0} ({2})";
 "Via ({0})" = "Via ({0})";
 "Track ({0}) on {1}" = "Pist ({0}), {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "Kartta bakır katman yok.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "Kartın Edge.Cuts katmanında dış hattı yok; üretici nereden keseceğini bilemez.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Kör, gömülü ve mikro vialar kaplamalı delik dosyasında listeleniyor; delme aralıklarını üreticinizle kontrol edin.";
+"The zip archive is damaged" = "Zip arşivi bozuk";
+"Not a Gerber or drill file: {0}" = "Gerber ya da delik dosyası değil: {0}";
+"No Gerber or drill files found" = "Gerber ya da delik dosyası bulunamadı";
 "The file is empty" = "Dosya boş";
 "Out of memory" = "Bellek yetersiz";
 "The file could not be read: {0}" = "Dosya okunamadı: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Etiketler ({0})";
 "(no net)" = "(bağlantısız)";
 "All copper ({0})" = "Tüm bakır ({0})";
+"Drill hole (non-plated)" = "Delik (metalize değil)";
+"Drill hole (plated)" = "Delik (metalize)";
+"Hole" = "Delik";
+"oval {0}" = "oval {0}";
+"Position" = "Konum";
 "Pad {0}" = "Pad {0}";
 "Net" = "Net";
 "Pin function" = "Pin işlevi";
@@ -117,10 +126,7 @@
 "Custom shape" = "Özel şekil";
 "Shape" = "Şekil";
 "Size" = "Boyut";
-"Hole" = "Delik";
-"oval {0}" = "oval {0}";
 "Angle" = "Açı";
-"Position" = "Konum";
 "Layers" = "Katmanlar";
 "Blind" = "Kör";
 "Buried" = "Gömülü";

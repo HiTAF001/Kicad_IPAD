@@ -59,6 +59,7 @@ enum EditSheet: String, Identifiable {
 /// Something that would throw away unsaved edits, waiting for the user's answer.
 enum PendingAction {
     case open(URL)
+    case openFiles([URL])
     case openSample(SampleBoard)
     case close
 }
@@ -118,6 +119,11 @@ final class BoardStore: ObservableObject {
     // editing
     @Published var editMode = false {
         didSet {
+            if editMode && board?.isFabrication == true {
+                editMode = false // Gerber boards are for viewing only
+                return
+            }
+
             if editMode && measureMode {
                 measureMode = false
             }
@@ -147,6 +153,11 @@ final class BoardStore: ObservableObject {
     @Published var drawTool = false {
         didSet {
             guard drawTool != oldValue else { return }
+
+            if drawTool && board?.isFabrication == true {
+                drawTool = false
+                return
+            }
 
             if drawTool {
                 if !editMode {
@@ -242,11 +253,13 @@ final class BoardStore: ObservableObject {
     var canEdit: Bool { document != nil && board != nil && !isRebuilding && !isLoading }
 
     var documentName: String { board?.name ?? "board" }
+    /// The open board came from Gerber / drill files (no editing, checks or exports).
+    var isFabricationView: Bool { board?.isFabrication == true }
 
     // MARK: - Launch arguments (CI screenshots)
 
     /// -NetloomOpenSample <id>  -NetloomFlip YES  -NetloomPanel info|layers|search
-    /// -NetloomDemo select|net|measure|labels|edit
+    /// -NetloomDemo select|net|measure|labels|edit|route|drc|fab|gerber
     func handleLaunchArguments() {
         guard !launchHandled else { return }
 
@@ -310,19 +323,36 @@ final class BoardStore: ObservableObject {
 
             if let pose = board.footprintPose(target) {
                 let start = board.snap(pose.position, tolerance: 6, visible: visibilityBytes()) ?? pose.position
-                var points: [SIMD2<Double>] = []
 
-                for i in 0...60 {
-                    let t = Double(i) / 60
-                    let x = start.x + 14 * t
-                    let y = start.y + (t < 0.5 ? 0 : 9 * (t - 0.5) * 2) + 0.25 * sin(t * 19)
-                    points.append(SIMD2(x, y))
+                func stroke(_ dx: Double, _ dy: Double) -> [SIMD2<Double>] {
+                    (0...60).map { i in
+                        let t = Double(i) / 60
+                        return SIMD2(start.x + dx * t,
+                                     start.y + (t < 0.5 ? 0 : dy * (t - 0.5) * 2) + 0.25 * sin(t * 19))
+                    }
                 }
 
-                demoStroke = points
+                // the first direction that gives a track which can be placed
+                let tries: [(Double, Double)] = [(14, 9), (-14, 9), (14, -9), (-14, -9), (10, 4), (-10, 4),
+                                                 (10, -4), (-10, -4), (6, 3), (-6, 3), (6, -3), (-6, -3)]
+                var chosen = stroke(14, 9)
 
-                var b = BoardBounds(minX: start.x - 6, minY: start.y - 6, maxX: start.x + 20, maxY: start.y + 15)
-                b.minX -= 1
+                for (dx, dy) in tries {
+                    let points = stroke(dx, dy)
+
+                    if let preview = board.buildRoute(points: points, settings: routeSettings, tolerance: 0.3,
+                                                      snapRadius: 1.0, clearance: 0.2),
+                       preview.canCommit {
+                        chosen = points
+                        break
+                    }
+                }
+
+                demoStroke = chosen
+
+                let xs = chosen.map(\.x), ys = chosen.map(\.y)
+                let b = BoardBounds(minX: (xs.min() ?? start.x) - 6, minY: (ys.min() ?? start.y) - 6,
+                                    maxX: (xs.max() ?? start.x) + 6, maxY: (ys.max() ?? start.y) + 6)
                 focus(on: b, minSize: 20)
             }
 
@@ -333,6 +363,12 @@ final class BoardStore: ObservableObject {
         case "fab":
             showFab = true
             makeFabrication()
+
+        case "gerber":
+            // the board's own fabrication files, opened again as a Gerber set
+            let zip = board.makeFabrication(baseName: board.name, useAuxOrigin: false).zip
+            let name = board.name
+            loadFabrication(name: name) { [(name: "\(name)-fab.zip", data: zip)] }
 
         default:
             break
@@ -347,10 +383,78 @@ final class BoardStore: ObservableObject {
             return
         }
 
+        if url.hasDirectoryPath {
+            openFabrication(urls: [url])
+            return
+        }
+
         let name = url.deletingPathExtension().lastPathComponent
         load(name: name, url: url) {
             try FileReader.read(url: url)
         }
+    }
+
+    /// Several files picked at once: a set of Gerber / drill files (or folders and zips of them).
+    func open(urls: [URL]) {
+        if urls.count == 1, let url = urls.first {
+            open(url: url)
+            return
+        }
+
+        guard !urls.isEmpty else { return }
+
+        if docState.modified {
+            pendingAction = .openFiles(urls)
+            return
+        }
+
+        openFabrication(urls: urls)
+    }
+
+    private func openFabrication(urls: [URL]) {
+        loadFabrication(name: Self.fabricationName(urls)) {
+            try FileReader.readAll(urls: urls)
+        }
+    }
+
+    private func loadFabrication(name: String, read: @escaping @Sendable () throws -> [(name: String, data: Data)]) {
+        guard !isLoading else { return }
+
+        isLoading = true
+        loadingName = name
+        errorMessage = nil
+
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<(BoardDocument?, LoadedBoard), Error>
+
+            do {
+                let loaded = try LoadedBoard.loadFabrication(files: try read(), name: name)
+                outcome = .success((nil, loaded))
+            } catch {
+                outcome = .failure(error)
+            }
+
+            await self.finish(outcome, url: nil)
+        }
+    }
+
+    /// "board" for board-F_Cu.gbr, board-B_Cu.gbr ...; a folder or zip gives its own name.
+    nonisolated static func fabricationName(_ urls: [URL]) -> String {
+        if urls.count == 1, let url = urls.first {
+            return url.deletingPathExtension().lastPathComponent
+        }
+
+        let stems = urls.map { $0.deletingPathExtension().lastPathComponent }
+        var prefix = stems.first ?? ""
+
+        for stem in stems.dropFirst() {
+            while !prefix.isEmpty && !stem.hasPrefix(prefix) {
+                prefix.removeLast()
+            }
+        }
+
+        let trimmed = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "-_. "))
+        return trimmed.isEmpty ? String(localized: "Gerber files") : trimmed
     }
 
     func openSample(_ sample: SampleBoard) {
@@ -377,13 +481,21 @@ final class BoardStore: ObservableObject {
         errorMessage = nil
 
         Task.detached(priority: .userInitiated) {
-            let outcome: Result<(BoardDocument, LoadedBoard), Error>
+            let outcome: Result<(BoardDocument?, LoadedBoard), Error>
 
             do {
                 let data = try read()
-                let doc = try BoardDocument.create(data: data)
-                let loaded = try LoadedBoard.load(document: doc, name: name, fileSize: data.count)
-                outcome = .success((doc, loaded))
+
+                if LoadedBoard.looksLikeFabrication(data) {
+                    // a Gerber, drill or zip file: view only
+                    let file = url?.lastPathComponent ?? name
+                    let loaded = try LoadedBoard.loadFabrication(files: [(name: file, data: data)], name: name)
+                    outcome = .success((nil, loaded))
+                } else {
+                    let doc = try BoardDocument.create(data: data)
+                    let loaded = try LoadedBoard.load(document: doc, name: name, fileSize: data.count)
+                    outcome = .success((doc, loaded))
+                }
             } catch {
                 outcome = .failure(error)
             }
@@ -392,15 +504,15 @@ final class BoardStore: ObservableObject {
         }
     }
 
-    private func finish(_ outcome: Result<(BoardDocument, LoadedBoard), Error>, url: URL?) {
+    private func finish(_ outcome: Result<(BoardDocument?, LoadedBoard), Error>, url: URL?) {
         isLoading = false
 
         switch outcome {
         case .success(let (doc, loaded)):
             rebuildGeneration += 1 // a rebuild of the previous document must not land here
             document = doc
-            fileURL = url
-            docState = DocumentState(doc)
+            fileURL = doc == nil ? nil : url
+            docState = doc.map { DocumentState($0) } ?? DocumentState()
             dragPreview = nil
             isRebuilding = false
             activeSheet = nil
@@ -420,7 +532,12 @@ final class BoardStore: ObservableObject {
             showDRC = false
             fabPackage = nil
             showFab = false
-            loadSiblingRules(for: url)
+            drawTool = false
+
+            if doc != nil {
+                loadSiblingRules(for: url)
+            }
+
             fitToken += 1
 
             if let panel = pendingPanel {
@@ -469,6 +586,7 @@ final class BoardStore: ObservableObject {
 
         switch action {
         case .open(let url): open(url: url)
+        case .openFiles(let urls): open(urls: urls)
         case .openSample(let sample): openSample(sample)
         case .close: close()
         }
@@ -1287,5 +1405,48 @@ enum FileReader {
         }
 
         return try result.get()
+    }
+
+    /// The files behind a picked selection: files as they are, folders one level deep.
+    static func readAll(urls: [URL]) throws -> [(name: String, data: Data)] {
+        var files: [(name: String, data: Data)] = []
+        var total = 0
+        let limit = 512 * 1024 * 1024
+
+        for url in urls {
+            if url.hasDirectoryPath {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let entries = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isRegularFileKey],
+                                                                          options: [.skipsHiddenFiles])
+
+                for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                    guard (try? entry.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+
+                    let data = try Data(contentsOf: entry, options: [.mappedIfSafe])
+                    total += data.count
+                    files.append((name: entry.lastPathComponent, data: data))
+                }
+            } else {
+                let data = try read(url: url)
+                total += data.count
+                files.append((name: url.lastPathComponent, data: data))
+            }
+
+            if total > limit {
+                throw NetloomError.message(String(localized: "The selected files are too large."))
+            }
+        }
+
+        if files.isEmpty {
+            throw NetloomError.message(String(localized: "The folder is empty."))
+        }
+
+        return files
     }
 }

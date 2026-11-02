@@ -23,10 +23,15 @@ add_library( kpcore STATIC
     core/src/drc.cpp
     core/src/fab.cpp
     core/src/route.cpp
+    core/src/gerber.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
 )
 target_include_directories( kpcore PUBLIC core/include PRIVATE core/src )
+
+# zip archives of fabrication files are inflated with zlib (part of the iOS SDK too)
+find_package( ZLIB REQUIRED )
+target_link_libraries( kpcore PUBLIC ZLIB::ZLIB )
 
 if( CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" )
     target_compile_options( kpcore PRIVATE -Wall -Wextra -Wno-unused-parameter )
@@ -53,3 +58,9 @@ add_test( NAME edit_undo_roundtrip
           COMMAND ${CMAKE_COMMAND}
                   -DKPCLI=$<TARGET_FILE:kpcli> -DIN=${NETLOOM_PIC} -DOUT=${CMAKE_BINARY_DIR}/undo_roundtrip.kicad_pcb
                   -P ${CMAKE_SOURCE_DIR}/tools/edit_roundtrip.cmake )
+
+# Fabrication files written for a board must read back as a Gerber board (folder and zip).
+add_test( NAME fab_gerber_roundtrip
+          COMMAND ${CMAKE_COMMAND}
+                  -DKPCLI=$<TARGET_FILE:kpcli> -DIN=${NETLOOM_PIC} -DOUT=${CMAKE_BINARY_DIR}/fab_roundtrip
+                  -P ${CMAKE_SOURCE_DIR}/tools/fab_roundtrip.cmake )

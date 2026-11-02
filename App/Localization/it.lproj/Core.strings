@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "Impossibile leggere il file di progetto ({0}); si usano le regole della scheda.";
 "The project file has no board settings; using the board's own rules." = "Il file di progetto non ha impostazioni della scheda; si usano le regole della scheda.";
 "no net" = "nessun net";
+"Unnumbered pad of {0} ({1})" = "Pad senza numero di {0} ({1})";
 "Pad {0} of {1} ({2})" = "Piazzola {0} di {1} ({2})";
 "Via ({0})" = "Via ({0})";
 "Track ({0}) on {1}" = "Pista ({0}) su {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "La scheda non ha strati di rame.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "La scheda non ha un contorno su Edge.Cuts; il produttore non saprà dove tagliare.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Le via cieche, interrate e le microvia sono elencate nel file di foratura metallizzata; verifica le profondità con il produttore.";
+"The zip archive is damaged" = "L'archivio ZIP è danneggiato";
+"Not a Gerber or drill file: {0}" = "Non è un file Gerber né di foratura: {0}";
+"No Gerber or drill files found" = "Nessun file Gerber o di foratura trovato";
 "The file is empty" = "Il file è vuoto";
 "Out of memory" = "Memoria insufficiente";
 "The file could not be read: {0}" = "Impossibile leggere il file: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Etichette ({0})";
 "(no net)" = "(nessun net)";
 "All copper ({0})" = "Tutto il rame ({0})";
+"Drill hole (non-plated)" = "Foro (non metallizzato)";
+"Drill hole (plated)" = "Foro (metallizzato)";
+"Hole" = "Foro";
+"oval {0}" = "ovale {0}";
+"Position" = "Posizione";
 "Pad {0}" = "Piazzola {0}";
 "Net" = "Net";
 "Pin function" = "Funzione del pin";
@@ -117,10 +126,7 @@
 "Custom shape" = "Forma personalizzata";
 "Shape" = "Forma";
 "Size" = "Dimensione";
-"Hole" = "Foro";
-"oval {0}" = "ovale {0}";
 "Angle" = "Angolo";
-"Position" = "Posizione";
 "Layers" = "Livelli";
 "Blind" = "Cieca";
 "Buried" = "Sepolta";

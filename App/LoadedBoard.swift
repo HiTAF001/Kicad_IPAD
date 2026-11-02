@@ -247,6 +247,8 @@ final class LoadedBoard: @unchecked Sendable {
     let airwires: [SIMD4<Float>]
     /// Boards rebuilt from the same document share this (0 = not editable).
     let lineage: Int
+    /// Built from Gerber / drill files: for viewing only.
+    let isFabrication: Bool
 
     private let handle: OpaquePointer
 
@@ -255,6 +257,7 @@ final class LoadedBoard: @unchecked Sendable {
         self.fileSize = fileSize
         self.handle = handle
         self.lineage = lineage
+        isFabrication = kp_board_is_fab(handle) != 0
 
         var s = kp_stats()
         kp_board_stats(handle, &s)
@@ -430,6 +433,58 @@ final class LoadedBoard: @unchecked Sendable {
             return try LoadedBoard(name: name, fileSize: data.count, handle: handle, device: device, lineage: 0)
         } catch {
             // init threw before taking ownership through deinit
+            kp_board_free(handle)
+            throw error
+        }
+    }
+
+    /// Is this a Gerber, Excellon drill or zip file rather than a KiCad board?
+    static func looksLikeFabrication(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
+            guard let base = raw.baseAddress, raw.count > 0 else { return false }
+            return kp_data_is_fab(base.assumingMemoryBound(to: CChar.self), raw.count) != 0
+        }
+    }
+
+    /// Builds a view-only board from Gerber, drill and zip files (background task).
+    static func loadFabrication(files: [(name: String, data: Data)], name: String) throws -> LoadedBoard {
+        guard let device = MetalContext.shared.device else {
+            throw NetloomError.message(String(localized: "This device does not support Metal graphics."))
+        }
+
+        guard let input = kp_fab_input_new() else {
+            throw NetloomError.message(String(localized: "Out of memory."))
+        }
+
+        defer { kp_fab_input_free(input) }
+
+        var total = 0
+
+        for file in files {
+            total += file.data.count
+            file.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                guard let base = raw.baseAddress, raw.count > 0 else { return }
+                kp_fab_input_add(input, file.name, base.assumingMemoryBound(to: CChar.self), raw.count)
+            }
+        }
+
+        let errorSize = 1024
+        var errorBuffer = [CChar](repeating: 0, count: errorSize)
+        let handle = errorBuffer.withUnsafeMutableBufferPointer { errPtr -> OpaquePointer? in
+            kp_board_load_fab(input, errPtr.baseAddress, errorSize)
+        }
+
+        guard let handle else {
+            let message = errorBuffer.withUnsafeBufferPointer { ptr -> String in
+                guard let base = ptr.baseAddress else { return "" }
+                return String(cString: base)
+            }
+            throw NetloomError.message(message.isEmpty ? String(localized: "The files could not be opened.") : message)
+        }
+
+        do {
+            return try LoadedBoard(name: name, fileSize: total, handle: handle, device: device, lineage: 0)
+        } catch {
             kp_board_free(handle)
             throw error
         }

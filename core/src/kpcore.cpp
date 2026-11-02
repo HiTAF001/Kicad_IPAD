@@ -15,6 +15,7 @@
 #include "connectivity.h"
 #include "drc.h"
 #include "fab.h"
+#include "gerber.h"
 #include "document.h"
 #include "edit.h"
 #include "geom.h"
@@ -25,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
 #include <string>
@@ -41,6 +43,7 @@ struct kp_board
     kp_item     rangeKey { -1, -1, -1, -1, -1 };
     int32_t     rangeWholeNet = -1;
     std::vector<float> airwires;   // x1,y1,x2,y2 per airwire
+    std::vector<std::string> netDisplay; // net names without KiCad escapes (filled on demand)
     std::vector<int>   docMap;     // parse index -> document item (boards built from a kp_doc)
     const void*        docOwner = nullptr;
     uint64_t           docState = 0;
@@ -84,13 +87,10 @@ static void copyError( char* aDst, size_t aSize, const std::string& aMsg )
 }
 
 
-static kp_board* buildBoard( const char* data, size_t length, char* error, size_t error_size );
-
-extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error, size_t error_size )
-{
-    return buildBoard( data, length, error, error_size );
-}
-
+/// Load a board with aLoader (which fills kp::Board or throws), then build the mesh, the
+/// connectivity (KiCad boards only) and the statistics.
+static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bool aConnectivity, char* error,
+                            size_t error_size );
 
 static kp_board* buildBoard( const char* data, size_t length, char* error, size_t error_size )
 {
@@ -100,6 +100,75 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
         return nullptr;
     }
 
+    return buildWith( [&]( kp::Board& aBoard ) { kp::LoadBoard( aBoard, data, length ); }, true, error, error_size );
+}
+
+extern "C" kp_board* kp_board_load( const char* data, size_t length, char* error, size_t error_size )
+{
+    return buildBoard( data, length, error, error_size );
+}
+
+
+struct kp_fab_input
+{
+    std::vector<kp::FabInput> files;
+};
+
+extern "C" int32_t kp_data_is_fab( const char* data, size_t length )
+{
+    if( !data || length == 0 )
+        return 0;
+
+    return kp::LooksLikeGerber( data, length ) || kp::LooksLikeExcellon( data, length ) || kp::LooksLikeZip( data, length )
+                   ? 1
+                   : 0;
+}
+
+extern "C" kp_fab_input* kp_fab_input_new( void )
+{
+    return new( std::nothrow ) kp_fab_input();
+}
+
+extern "C" void kp_fab_input_add( kp_fab_input* input, const char* name, const char* data, size_t length )
+{
+    if( !input || !data )
+        return;
+
+    try
+    {
+        input->files.push_back( { name ? name : "", std::string( data, length ) } );
+    }
+    catch( const std::bad_alloc& )
+    {
+    }
+}
+
+extern "C" void kp_fab_input_free( kp_fab_input* input )
+{
+    delete input;
+}
+
+extern "C" kp_board* kp_board_load_fab( const kp_fab_input* input, char* error, size_t error_size )
+{
+    if( !input || input->files.empty() )
+    {
+        copyError( error, error_size, kp::Tr( "The file is empty" ) );
+        return nullptr;
+    }
+
+    return buildWith( [&]( kp::Board& aBoard ) { kp::LoadFabFiles( aBoard, input->files ); }, false, error,
+                      error_size );
+}
+
+extern "C" int32_t kp_board_is_fab( const kp_board* board )
+{
+    return board && board->board.generator == "gerber" ? 1 : 0;
+}
+
+
+static kp_board* buildWith( const std::function<void( kp::Board& )>& aLoader, bool aConnectivity, char* error,
+                            size_t error_size )
+{
     kp_board* b = new( std::nothrow ) kp_board();
 
     if( !b )
@@ -113,7 +182,7 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
         using clock = std::chrono::steady_clock;
         auto t0 = clock::now();
 
-        kp::LoadBoard( b->board, data, length );
+        aLoader( b->board );
 
         auto t1 = clock::now();
 
@@ -122,7 +191,10 @@ static kp_board* buildBoard( const char* data, size_t length, char* error, size_
         auto t2 = clock::now();
 
         kp::Connectivity conn;
-        kp::ComputeConnectivity( b->board, conn );
+
+        if( aConnectivity )
+            kp::ComputeConnectivity( b->board, conn );
+
         b->airwires.reserve( conn.airwires.size() * 4 );
 
         for( const kp::Airwire& a : conn.airwires )
@@ -531,7 +603,17 @@ extern "C" const char* kp_board_net_name( const kp_board* board, int32_t net )
     if( !board || net < 0 || net >= (int32_t) board->board.nets.size() )
         return "";
 
-    return board->board.nets[(size_t) net].c_str();
+    kp_board* b = const_cast<kp_board*>( board );
+
+    if( b->netDisplay.size() != b->board.nets.size() )
+    {
+        b->netDisplay.clear();
+
+        for( const std::string& n : b->board.nets )
+            b->netDisplay.push_back( kp::DisplayNetName( n ) );
+    }
+
+    return b->netDisplay[(size_t) net].c_str();
 }
 
 
@@ -1093,7 +1175,7 @@ extern "C" int32_t kp_edit_add_route( kp_doc* doc, const kp_board* board, const 
                     [&]( kp::EditTarget& t, std::string& err )
                     {
                         std::string label = route->result.net > 0
-                                                    ? kp::TrF( "Draw track ({0})", { board->board.nets[(size_t) route->result.net] } )
+                                                    ? kp::TrF( "Draw track ({0})", { kp::DisplayNetName( board->board.nets[(size_t) route->result.net] ) } )
                                                     : std::string( kp::Tr( "Draw track" ) );
                         return kp::AddItems( t, route->result.tracks, route->result.vias, label, err );
                     } );

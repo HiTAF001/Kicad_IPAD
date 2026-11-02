@@ -152,6 +152,20 @@ typedef struct
  */
 kp_board* kp_board_load( const char* data, size_t length, char* error, size_t error_size );
 
+/**
+ * Fabrication files: Gerber (RS-274X / X2), Excellon drill files and zip archives of them.
+ * Collect the files of one board with kp_fab_input_add, then build a view-only board whose
+ * layers follow the files (X2 file function, KiCad / Protel / Eagle file names).
+ */
+typedef struct kp_fab_input kp_fab_input;
+
+int32_t       kp_data_is_fab( const char* data, size_t length ); /**< 1 = Gerber, drill or zip */
+kp_fab_input* kp_fab_input_new( void );
+void          kp_fab_input_add( kp_fab_input* input, const char* name, const char* data, size_t length );
+void          kp_fab_input_free( kp_fab_input* input );
+kp_board*     kp_board_load_fab( const kp_fab_input* input, char* error, size_t error_size );
+int32_t       kp_board_is_fab( const kp_board* board ); /**< 1 = built from fabrication files */
+
 void kp_board_free( kp_board* board );
 
 void        kp_board_stats( const kp_board* board, kp_stats* out );

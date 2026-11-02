@@ -296,6 +296,16 @@ public:
         return d;
     }
 
+    /// Dark (normal) or clear polarity for what follows.
+    void polarity( bool aDark )
+    {
+        if( aDark != m_dark )
+        {
+            m_body += aDark ? "%LPD*%\n" : "%LPC*%\n";
+            m_dark = aDark;
+        }
+    }
+
     void select( int d )
     {
         if( d != m_current )
@@ -434,6 +444,7 @@ private:
     std::string                        m_macroText, m_apertureText, m_body;
     std::string                        m_headerFunc, m_bodyFunc;
     int                                m_current = -1;
+    bool                               m_dark = true;
     Pt                                 m_pen;
     bool                               m_penValid = false;
 };
@@ -704,6 +715,13 @@ private:
     }
 
     void shape( Gerber& g, const Shape& s, const char* func )
+    {
+        g.polarity( !s.clear );
+        plotShape( g, s, func );
+        g.polarity( true );
+    }
+
+    void plotShape( Gerber& g, const Shape& s, const char* func )
     {
         double w = s.width;
 

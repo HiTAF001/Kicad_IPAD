@@ -29,8 +29,13 @@ struct BoardInfoView: View {
                         row("Date", board.date)
                     }
 
-                    row("KiCad", kicadVersionText)
-                    row("File format", "\(board.stats.file_version)")
+                    if board.isFabrication {
+                        row("Type", String(localized: "Gerber and drill files (view only)"))
+                    } else {
+                        row("KiCad", kicadVersionText)
+                        row("File format", "\(board.stats.file_version)")
+                    }
+
                     row("Size", ByteCountFormatter.string(fromByteCount: Int64(board.fileSize), countStyle: .file))
                 }
 
@@ -41,27 +46,20 @@ struct BoardInfoView: View {
                         row("Dimensions", String(localized: "No board outline (Edge.Cuts)"))
                     }
 
-                    row("Thickness", String(format: "%.2f mm", board.stats.thickness_mm))
+                    if !board.isFabrication {
+                        row("Thickness", String(format: "%.2f mm", board.stats.thickness_mm))
+                    }
+
                     row("Copper layers", "\(board.stats.copper_layers)")
                 }
 
-                Section("Contents") {
-                    row("Footprints", "\(board.stats.footprints)")
-                    row("Pads", "\(board.stats.pads)")
-                    row("Tracks", board.stats.arcs > 0
-                        ? String(localized: "\(Int(board.stats.tracks)) straight + \(Int(board.stats.arcs)) arc")
-                        : "\(board.stats.tracks)")
-                    row("Vias", "\(board.stats.vias)")
-                    row("Holes (total)", "\(board.stats.holes)")
-                    row("Copper zones", board.stats.keepouts > 0
-                        ? String(localized: "\(Int(board.stats.zones)) (+\(Int(board.stats.keepouts)) keepout)")
-                        : "\(board.stats.zones)")
-                    row("Nets", "\(board.stats.nets)")
-                    row("Unconnected", board.stats.unconnected == 0
-                        ? String(localized: "None — all connections complete")
-                        : String(localized: "\(Int(board.stats.unconnected)) connections missing (ratsnest)"))
-                    row("Board graphics", "\(board.stats.graphics)")
-                    row("Board texts", "\(board.stats.texts)")
+                if board.isFabrication {
+                    Section("Contents") {
+                        row("Drill holes", "\(board.stats.holes)")
+                        row("Drawn objects", "\(board.stats.graphics)")
+                    }
+                } else {
+                    kicadContents
                 }
 
                 Section("Performance") {
@@ -97,6 +95,27 @@ struct BoardInfoView: View {
         }
 
         return "\(board.generatorVersion) (\(board.generator))"
+    }
+
+    private var kicadContents: some View {
+        Section("Contents") {
+            row("Footprints", "\(board.stats.footprints)")
+            row("Pads", "\(board.stats.pads)")
+            row("Tracks", board.stats.arcs > 0
+                ? String(localized: "\(Int(board.stats.tracks)) straight + \(Int(board.stats.arcs)) arc")
+                : "\(board.stats.tracks)")
+            row("Vias", "\(board.stats.vias)")
+            row("Holes (total)", "\(board.stats.holes)")
+            row("Copper zones", board.stats.keepouts > 0
+                ? String(localized: "\(Int(board.stats.zones)) (+\(Int(board.stats.keepouts)) keepout)")
+                : "\(board.stats.zones)")
+            row("Nets", "\(board.stats.nets)")
+            row("Unconnected", board.stats.unconnected == 0
+                ? String(localized: "None — all connections complete")
+                : String(localized: "\(Int(board.stats.unconnected)) connections missing (ratsnest)"))
+            row("Board graphics", "\(board.stats.graphics)")
+            row("Board texts", "\(board.stats.texts)")
+        }
     }
 
     private func row(_ title: LocalizedStringKey, _ value: String) -> some View {

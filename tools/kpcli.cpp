@@ -11,7 +11,8 @@
  * stencil, straight alpha blending, label zoom thresholds, highlight dimming), so the output
  * PNG shows what the app will draw.
  *
- *   kpcli stats  <board>
+ *   kpcli stats  <board>                    (a board may also be a Gerber / drill / zip file,
+ *                                            or a folder of fabrication files)
  *   kpcli check  <board>...                 (exit code != 0 if any board fails to load)
  *   kpcli pick   <board> <x> <y> [tol]      (items under a point, with their descriptions)
  *   kpcli render <board> <out.png> [width] [options]
@@ -37,6 +38,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -55,9 +57,40 @@ static bool readFile( const char* aPath, std::string& aOut )
 }
 
 
+/// A .kicad_pcb, or fabrication files: one Gerber / drill / zip file, or a folder of them.
 static kp_board* load( const char* aPath )
 {
     std::string data;
+    char        err[512] = { 0 };
+    std::error_code ec;
+
+    if( std::filesystem::is_directory( aPath, ec ) )
+    {
+        kp_fab_input* in = kp_fab_input_new();
+        std::vector<std::filesystem::path> files;
+
+        for( const auto& e : std::filesystem::directory_iterator( aPath, ec ) )
+        {
+            if( e.is_regular_file() )
+                files.push_back( e.path() );
+        }
+
+        std::sort( files.begin(), files.end() );
+
+        for( const auto& f : files )
+        {
+            if( readFile( f.string().c_str(), data ) )
+                kp_fab_input_add( in, f.filename().string().c_str(), data.data(), data.size() );
+        }
+
+        kp_board* b = kp_board_load_fab( in, err, sizeof( err ) );
+        kp_fab_input_free( in );
+
+        if( !b )
+            fprintf( stderr, "%s: %s\n", aPath, err );
+
+        return b;
+    }
 
     if( !readFile( aPath, data ) )
     {
@@ -65,8 +98,19 @@ static kp_board* load( const char* aPath )
         return nullptr;
     }
 
-    char      err[512] = { 0 };
-    kp_board* b = kp_board_load( data.data(), data.size(), err, sizeof( err ) );
+    kp_board* b = nullptr;
+
+    if( kp_data_is_fab( data.data(), data.size() ) )
+    {
+        kp_fab_input* in = kp_fab_input_new();
+        kp_fab_input_add( in, std::filesystem::path( aPath ).filename().string().c_str(), data.data(), data.size() );
+        b = kp_board_load_fab( in, err, sizeof( err ) );
+        kp_fab_input_free( in );
+    }
+    else
+    {
+        b = kp_board_load( data.data(), data.size(), err, sizeof( err ) );
+    }
 
     if( !b )
         fprintf( stderr, "%s: %s\n", aPath, err );

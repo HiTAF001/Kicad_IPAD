@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "プロジェクトファイルを読み込めませんでした ({0})。基板自体のルールを使用します。";
 "The project file has no board settings; using the board's own rules." = "プロジェクトファイルに基板設定がありません。基板自体のルールを使用します。";
 "no net" = "ネットなし";
+"Unnumbered pad of {0} ({1})" = "{0} の番号なしパッド ({1})";
 "Pad {0} of {1} ({2})" = "{1} のパッド {0} ({2})";
 "Via ({0})" = "ビア ({0})";
 "Track ({0}) on {1}" = "配線 ({0})、{1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "基板に銅箔層がありません。";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "Edge.Cuts に基板外形がありません。製造業者が切断位置を判断できません。";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "ブラインド、ベリード、マイクロビアはメッキ穴のドリルファイルに含まれています。穴あけ範囲を製造業者に確認してください。";
+"The zip archive is damaged" = "ZIP アーカイブが破損しています";
+"Not a Gerber or drill file: {0}" = "Gerber でもドリルファイルでもありません: {0}";
+"No Gerber or drill files found" = "Gerber またはドリルファイルが見つかりません";
 "The file is empty" = "ファイルが空です";
 "Out of memory" = "メモリ不足です";
 "The file could not be read: {0}" = "ファイルを読み込めませんでした: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "ラベル ({0})";
 "(no net)" = "(ネットなし)";
 "All copper ({0})" = "全銅箔層 ({0})";
+"Drill hole (non-plated)" = "穴 (メッキなし)";
+"Drill hole (plated)" = "穴 (メッキあり)";
+"Hole" = "穴";
+"oval {0}" = "長円 {0}";
+"Position" = "位置";
 "Pad {0}" = "パッド {0}";
 "Net" = "ネット";
 "Pin function" = "ピン機能";
@@ -117,10 +126,7 @@
 "Custom shape" = "カスタム形状";
 "Shape" = "形状";
 "Size" = "サイズ";
-"Hole" = "穴";
-"oval {0}" = "長円 {0}";
 "Angle" = "角度";
-"Position" = "位置";
 "Layers" = "レイヤー";
 "Blind" = "ブラインド";
 "Buried" = "ベリッド";

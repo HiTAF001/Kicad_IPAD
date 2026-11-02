@@ -2875,6 +2875,83 @@ void Board::Finalize()
 }
 
 
+bool DescribeLayer( const std::string& aCanonical, Layer& aLayer )
+{
+    bool ok = describeLayer( aCanonical, aLayer );
+
+    if( ok )
+    {
+        aLayer.display = aCanonical;
+        aLayer.fileName = aCanonical;
+    }
+
+    return ok;
+}
+
+
+std::string DisplayNetName( const std::string& aName )
+{
+    if( aName.find( '{' ) == std::string::npos )
+        return aName;
+
+    static const std::pair<const char*, const char*> ESC[] = {
+        { "{slash}", "/" },   { "{backslash}", "\\" }, { "{colon}", ":" }, { "{dblquote}", "\"" },
+        { "{quote}", "'" },   { "{lt}", "<" },          { "{gt}", ">" },    { "{bar}", "|" },
+        { "{space}", " " },   { "{dollar}", "$" },      { "{tab}", " " },   { "{return}", " " },
+        { "{comma}", "," },   { "{brace}", "{" }
+    };
+
+    std::string out;
+    out.reserve( aName.size() );
+
+    for( size_t i = 0; i < aName.size(); )
+    {
+        bool done = false;
+
+        if( aName[i] == '{' )
+        {
+            for( const auto& [k, v] : ESC )
+            {
+                size_t n = std::strlen( k );
+
+                if( aName.compare( i, n, k ) == 0 )
+                {
+                    out += v;
+                    i += n;
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        if( !done )
+            out += aName[i++];
+    }
+
+    return out;
+}
+
+
+void FinishLayerStack( Board& b )
+{
+    std::vector<int> copper;
+
+    for( size_t i = 0; i < b.layers.size(); ++i )
+    {
+        if( b.layers[i].kind == LayerKind::COPPER )
+            copper.push_back( (int) i );
+    }
+
+    std::sort( copper.begin(), copper.end(),
+               [&]( int a, int c ) { return b.layers[a].copperOrder < b.layers[c].copperOrder; } );
+
+    for( size_t k = 0; k < copper.size(); ++k )
+        b.layers[copper[k]].copperOrder = (int) k;
+
+    b.copperStack = copper;
+}
+
+
 void LoadBoard( Board& aBoard, const char* aData, size_t aLen )
 {
     aBoard = Board();

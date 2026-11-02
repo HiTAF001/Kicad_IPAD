@@ -31,6 +31,7 @@
 "The project file could not be read ({0}); using the board's own rules." = "No se pudo leer el archivo del proyecto ({0}); se usan las reglas de la placa.";
 "The project file has no board settings; using the board's own rules." = "El archivo del proyecto no tiene ajustes de placa; se usan las reglas de la placa.";
 "no net" = "sin red";
+"Unnumbered pad of {0} ({1})" = "Pad sin número de {0} ({1})";
 "Pad {0} of {1} ({2})" = "Pad {0} de {1} ({2})";
 "Via ({0})" = "Vía ({0})";
 "Track ({0}) on {1}" = "Pista ({0}) en {1}";
@@ -82,6 +83,9 @@
 "The board has no copper layers." = "La placa no tiene capas de cobre.";
 "The board has no outline on Edge.Cuts; the fab will not know where to cut." = "La placa no tiene contorno en Edge.Cuts; el fabricante no sabrá por dónde cortar.";
 "Blind, buried and micro vias are listed in the plated drill file; check the drill spans with your fab." = "Las vías ciegas, enterradas y microvías figuran en el archivo de taladros metalizados; consulte los tramos de perforación con su fabricante.";
+"The zip archive is damaged" = "El archivo ZIP está dañado";
+"Not a Gerber or drill file: {0}" = "No es un archivo Gerber ni de taladrado: {0}";
+"No Gerber or drill files found" = "No se encontraron archivos Gerber ni de taladrado";
 "The file is empty" = "El archivo está vacío";
 "Out of memory" = "Memoria insuficiente";
 "The file could not be read: {0}" = "No se pudo leer el archivo: {0}";
@@ -100,6 +104,11 @@
 "Labels ({0})" = "Etiquetas ({0})";
 "(no net)" = "(sin red)";
 "All copper ({0})" = "Todo el cobre ({0})";
+"Drill hole (non-plated)" = "Taladro (no metalizado)";
+"Drill hole (plated)" = "Taladro (metalizado)";
+"Hole" = "Taladro";
+"oval {0}" = "ovalado {0}";
+"Position" = "Posición";
 "Pad {0}" = "Pad {0}";
 "Net" = "Red";
 "Pin function" = "Función del pin";
@@ -117,10 +126,7 @@
 "Custom shape" = "Forma personalizada";
 "Shape" = "Forma";
 "Size" = "Tamaño";
-"Hole" = "Taladro";
-"oval {0}" = "ovalado {0}";
 "Angle" = "Ángulo";
-"Position" = "Posición";
 "Layers" = "Capas";
 "Blind" = "Ciega";
 "Buried" = "Enterrada";

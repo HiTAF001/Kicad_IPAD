@@ -103,13 +103,11 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
             .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.kicadPCB, .data],
-                          allowsMultipleSelection: false) { result in
+                          allowedContentTypes: [.kicadPCB, .zip, .folder, .data],
+                          allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
-                    if let url = urls.first {
-                        store.open(url: url)
-                    }
+                    store.open(urls: urls)
                 case .failure(let error):
                     store.errorMessage = error.localizedDescription
                 }
@@ -224,23 +222,25 @@ struct ContentView: View {
 
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if store.board != nil {
-                Button {
-                    store.editMode.toggle()
-                } label: {
-                    Label(store.editMode ? "Finish editing" as LocalizedStringKey : "Edit",
-                          systemImage: store.editMode ? "pencil.circle.fill" : "pencil.circle")
-                }
+                if !store.isFabricationView {
+                    Button {
+                        store.editMode.toggle()
+                    } label: {
+                        Label(store.editMode ? "Finish editing" as LocalizedStringKey : "Edit",
+                              systemImage: store.editMode ? "pencil.circle.fill" : "pencil.circle")
+                    }
 
-                Button {
-                    store.showDRC = true
-                } label: {
-                    Label("Design check", systemImage: store.drcMarkers.isEmpty ? "checkmark.shield" : "exclamationmark.shield")
-                }
+                    Button {
+                        store.showDRC = true
+                    } label: {
+                        Label("Design check", systemImage: store.drcMarkers.isEmpty ? "checkmark.shield" : "exclamationmark.shield")
+                    }
 
-                Button {
-                    store.showFab = true
-                } label: {
-                    Label("Fabrication files", systemImage: "shippingbox")
+                    Button {
+                        store.showFab = true
+                    } label: {
+                        Label("Fabrication files", systemImage: "shippingbox")
+                    }
                 }
 
                 Button {
@@ -373,6 +373,12 @@ struct WelcomeView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
 
+                Text("Gerber and drill files can be opened too: pick them all at once, their folder or their ZIP.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Sample boards")
                         .font(.headline)
@@ -458,6 +464,7 @@ struct HelpView: View {
                     helpRow("hand.raised", "Shorts are refused", "A track that would touch another net is not added; red rings show where")
                     helpRow("checkmark.shield", "Design check", "Clearances, shorts, holes, board edge, courtyards and missing connections, with the rules of the KiCad project file when available")
                     helpRow("shippingbox", "Fabrication files", "Gerber, drill, bill of materials and placement files in one ZIP for any board house")
+                    helpRow("doc.viewfinder", "Viewing Gerber files", "Open the Gerber and drill files of any CAD program (several at once, their folder or a ZIP) to look at them layer by layer before ordering")
                 }
 
                 Section("Keyboard / trackpad") {
