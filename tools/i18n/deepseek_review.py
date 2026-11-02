@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Netloom - PCB design for iPad
 # Copyright (C) 2026 Seyhan Labs
-"""
+r"""
 Second opinion on the translations: sends tools/i18n/ui.tsv and core.tsv to the DeepSeek API,
 language by language, and writes back only the corrections that keep every placeholder. A
 Markdown report lists each change with the reason the model gave, for a human to review in a
