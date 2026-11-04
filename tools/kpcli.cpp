@@ -962,6 +962,98 @@ static int cmdEdit( int argc, char** argv )
 }
 
 
+/// kpcli sch2pcb <root.kicad_sch> <board.kicad_pcb> [out.kicad_pcb]: the plan of "Update PCB from
+/// Schematic"; with an output file the update is applied and the board saved.
+static int cmdSch2Pcb( int argc, char** argv )
+{
+    static const char* severity[] = { "action", "info", "warning" };
+    std::string        data;
+
+    if( !readFile( argv[1], data ) )
+    {
+        fprintf( stderr, "cannot read %s\n", argv[1] );
+        return 1;
+    }
+
+    char    err[512] = { 0 };
+    kp_doc* doc = kp_doc_create( data.data(), data.size(), err, sizeof( err ) );
+
+    if( !doc )
+    {
+        fprintf( stderr, "%s\n", err );
+        return 1;
+    }
+
+    kp_board* board = kp_board_load_doc( doc, err, sizeof( err ) );
+    kp_board* sch = loadSchematic( argv[0] );
+
+    if( !board || !sch )
+    {
+        if( !board )
+            fprintf( stderr, "%s\n", err );
+
+        return 1;
+    }
+
+    kp_pcb_update* update = kp_sch_pcb_plan( sch, board );
+    kp_pcb_update_counts c;
+    kp_pcb_update_get_counts( update, &c );
+
+    for( int i = 0; i < kp_pcb_update_count( update ); ++i )
+    {
+        kp_pcb_update_line l;
+        kp_pcb_update_get( update, i, &l );
+        printf( "%d\t%s\t%s\n", l.kind, severity[l.severity], kp_pcb_update_text( update, i ) );
+    }
+
+    printf( "symbols %d, footprints %d: matched by path %d, by reference %d\n", c.symbols, c.footprints,
+            c.matched_by_path, c.matched_by_reference );
+    printf( "changes %d: reference %d, value %d, association %d, pads connected %d, reconnected %d, disconnected %d, "
+            "nets added %d, renamed %d, removed %d\n",
+            c.changes, c.reference_changes, c.value_changes, c.association_changes, c.pads_connected,
+            c.pads_reconnected, c.pads_disconnected, c.nets_added, c.nets_renamed, c.nets_removed );
+    printf( "report only: missing footprints %d, extra footprints %d, other footprint ids %d, nets with items left %d, "
+            "warnings %d\n",
+            c.missing_footprints, c.extra_footprints, c.footprint_differs, c.nets_with_items_left, c.warnings );
+    kp_pcb_update_free( update );
+    int rc = 0;
+
+    if( argc >= 3 )
+    {
+        if( c.changes == 0 )
+        {
+            printf( "nothing to change, %s not written\n", argv[2] );
+        }
+        else if( !kp_edit_update_from_schematic( doc, board, sch, err, sizeof( err ) ) )
+        {
+            fprintf( stderr, "%s\n", err );
+            rc = 1;
+        }
+        else
+        {
+            size_t        len = 0;
+            const char*   text = kp_doc_text( doc, &len );
+            std::ofstream out( argv[2], std::ios::binary );
+            out.write( text, (std::streamsize) len );
+            out.close();
+            printf( "saved %s (%zu bytes), undo step \"%s\"\n", argv[2], len, kp_doc_undo_label( doc ) );
+
+            kp_board* check = load( argv[2] );
+
+            if( !check )
+                rc = 1;
+            else
+                kp_board_free( check );
+        }
+    }
+
+    kp_board_free( sch );
+    kp_board_free( board );
+    kp_doc_free( doc );
+    return rc;
+}
+
+
 /// KPCLI_STRINGS=path/to/Core.strings: use that translation table (like the app does).
 static void loadTranslations()
 {
@@ -1185,6 +1277,9 @@ int main( int argc, char** argv )
     if( argc >= 4 && !strcmp( argv[1], "edit" ) )
         return cmdEdit( argc - 2, argv + 2 );
 
+    if( argc >= 4 && !strcmp( argv[1], "sch2pcb" ) )
+        return cmdSch2Pcb( argc - 2, argv + 2 );
+
     if( argc >= 4 && !strcmp( argv[1], "fab" ) )
         return cmdFab( argc - 2, argv + 2 );
 
@@ -1228,6 +1323,8 @@ int main( int argc, char** argv )
                      "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n"
                      "  kpcli edit <in> <out> ops... (move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |\n"
                      "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | track X1 Y1 X2 Y2 W LAYER NET |\n"
-                     "             addvia X Y SIZE DRILL NET | undo | redo)\n" );
+                     "             addvia X Y SIZE DRILL NET | undo | redo)\n"
+                     "  kpcli sch2pcb <root.kicad_sch> <board.kicad_pcb> [out.kicad_pcb]  (plan of Update PCB from Schematic;\n"
+                     "             with out.kicad_pcb the update is applied and the board saved)\n" );
     return 2;
 }

@@ -475,6 +475,88 @@ const char* kp_fab_warning( const kp_fab* fab, int32_t index );
 
 const char* kp_core_version( void );
 
+/* ------------------------------------------------------------------------------------------
+ * Phase 7: update PCB from schematic (KiCad's "Update PCB from Schematic" with its default
+ * options). The plan compares the schematic's symbols and nets with a board; applying it
+ * changes references, values, symbol associations, pad nets and net declarations of the
+ * board's document in ONE undo step. Footprints are neither added, replaced nor deleted;
+ * what only needs a look (missing footprints, footprints without symbol, other footprint
+ * library ids, tracks that stay on a net whose pads moved) is reported.
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_pcb_update kp_pcb_update;
+
+enum
+{
+    KP_UPDATE_MATCH_REFERENCE = 1,   /**< footprint matched through its reference, not its symbol path */
+    KP_UPDATE_REFERENCE = 2,         /**< reference designator changes */
+    KP_UPDATE_VALUE = 3,             /**< value changes */
+    KP_UPDATE_ASSOCIATION = 4,       /**< the footprint's symbol path changes */
+    KP_UPDATE_FOOTPRINT_DIFFERS = 5, /**< footprint library id differs from the symbol's (report only) */
+    KP_UPDATE_CONNECT = 6,           /**< a pad gets a net */
+    KP_UPDATE_RECONNECT = 7,         /**< a pad moves to another net */
+    KP_UPDATE_DISCONNECT = 8,        /**< a pad loses its net */
+    KP_UPDATE_NO_PIN = 9,            /**< a pad has no pin in the symbol (warning) */
+    KP_UPDATE_NET_ADD = 10,          /**< a net is added */
+    KP_UPDATE_NET_RENAME = 11,       /**< a net is renamed in place, its tracks, vias and zones follow */
+    KP_UPDATE_NET_REMOVE = 12,       /**< an unused net declaration is removed */
+    KP_UPDATE_NET_ITEMS_STAY = 13,   /**< tracks, vias and zones stay on a net whose pads moved (report only) */
+    KP_UPDATE_NET_KEPT = 14,         /**< a net without pads is kept because items still use it (warning) */
+    KP_UPDATE_MISSING_FOOTPRINT = 15,/**< a symbol has no footprint on the board (report only) */
+    KP_UPDATE_EXTRA_FOOTPRINT = 16,  /**< a footprint has no symbol, it is kept (report only) */
+    KP_UPDATE_INCOMPLETE = 17        /**< the schematic is incomplete (sub-sheets missing), nothing is applied */
+};
+
+enum
+{
+    KP_UPDATE_ACTION = 0,  /**< applied by the update */
+    KP_UPDATE_INFO = 1,    /**< report only */
+    KP_UPDATE_WARNING = 2  /**< report only, needs a look */
+};
+
+typedef struct
+{
+    int32_t symbols;              /**< symbols that go to the board */
+    int32_t footprints;           /**< footprints on the board */
+    int32_t matched_by_path;
+    int32_t matched_by_reference;
+    int32_t reference_changes;
+    int32_t value_changes;
+    int32_t association_changes;
+    int32_t footprint_differs;
+    int32_t pads_connected;       /**< pads that get a net */
+    int32_t pads_reconnected;
+    int32_t pads_disconnected;
+    int32_t nets_added;
+    int32_t nets_renamed;
+    int32_t nets_removed;
+    int32_t missing_footprints;
+    int32_t extra_footprints;
+    int32_t nets_with_items_left; /**< nets whose tracks, vias or zones stay although pads moved */
+    int32_t warnings;
+    int32_t changes;              /**< edits an update makes; 0 = the board is up to date */
+    int32_t incomplete;           /**< 1 = sub-sheet files are missing, the update is refused */
+} kp_pcb_update_counts;
+
+typedef struct
+{
+    int32_t kind;      /**< KP_UPDATE_* */
+    int32_t severity;  /**< KP_UPDATE_ACTION, _INFO or _WARNING */
+    int32_t footprint; /**< board footprint index the line is about, -1 = none */
+} kp_pcb_update_line;
+
+/** Compare a schematic (kp_board_load_sch) with a board. NULL if either is the wrong kind. */
+kp_pcb_update* kp_sch_pcb_plan( const kp_board* schematic, const kp_board* board );
+void        kp_pcb_update_free( kp_pcb_update* update );
+void        kp_pcb_update_get_counts( const kp_pcb_update* update, kp_pcb_update_counts* out );
+int32_t     kp_pcb_update_count( const kp_pcb_update* update );
+void        kp_pcb_update_get( const kp_pcb_update* update, int32_t index, kp_pcb_update_line* out );
+const char* kp_pcb_update_text( const kp_pcb_update* update, int32_t index ); /**< translated, one line */
+
+/** Plan and apply in one undo step ("Update PCB from schematic"). board: the document's current
+ *  board view. Returns 0 with an error if there is nothing to change or the update is refused. */
+int32_t kp_edit_update_from_schematic( kp_doc* doc, const kp_board* board, const kp_board* schematic, char* error,
+                                       size_t error_size );
+
 #ifdef __cplusplus
 }
 #endif

@@ -199,6 +199,7 @@ struct Pad
     int         footprint = -1;
     std::string pinFunction;
     std::string pinType;
+    std::string uuid;         ///< "(uuid ...)" or "(tstamp ...)", empty in KiCad 4/5 files
     double      localClearance = -1.0; ///< pad clearance override, -1 = none
     double      maskMargin = NAN;      ///< solder mask expansion override (NaN = inherit)
     double      pasteMargin = NAN;     ///< solder paste margin override
@@ -287,6 +288,7 @@ struct Footprint
     double      localClearance = -1.0;          ///< clearance override for its pads, -1 = none
     double      maskMargin = NAN, pasteMargin = NAN, pasteRatio = NAN; ///< overrides for its pads
     std::vector<std::string> netTieGroups;      ///< e.g. "1,2": pads allowed to short
+    std::string path;                           ///< "(path ...)": the symbol it belongs to, "/sheet uuids.../symbol uuid"
     BBox        localBox; ///< outline in the footprint frame (rotate by -angle around pos)
     int         docItem = -1; ///< index of the top-level file item this came from
 };

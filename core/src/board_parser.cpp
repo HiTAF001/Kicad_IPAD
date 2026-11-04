@@ -1697,6 +1697,10 @@ void BoardParser::parseFootprint( N aNode )
             for( N a = c.arg( 0 ); a; a = a.next() )
                 fp.netTieGroups.push_back( std::string( a.text() ) );
         }
+        else if( k == "path" )
+        {
+            fp.path = std::string( c.str( 0 ) );
+        }
     }
 
     xf.pos = fp.pos;
@@ -1974,6 +1978,10 @@ void BoardParser::parsePad( N aNode, int aFootprint, const FpXform& aXf )
         else if( k == "pintype" )
         {
             p.pinType = std::string( c.str( 0 ) );
+        }
+        else if( k == "uuid" || k == "tstamp" )
+        {
+            p.uuid = std::string( c.str( 0 ) );
         }
     }
 

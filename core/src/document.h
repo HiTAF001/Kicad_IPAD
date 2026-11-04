@@ -12,7 +12,8 @@
  * replace, remove or append whole items; everything else is written back byte for byte, so
  * data Netloom does not understand (stackup, net classes, 3D models, groups, ...) survives and
  * diffs stay small. Item indices never change (removed items become tombstones), which keeps
- * undo/redo simple.
+ * undo/redo simple. New items go at the end, or right after an existing item (InsertAfter);
+ * the file order is kept separately from the indices.
  */
 #ifndef NETLOOM_DOCUMENT_H
 #define NETLOOM_DOCUMENT_H
@@ -54,6 +55,10 @@ public:
     void Remove( int aIndex );
     int  Append( const std::string& aBody, const std::string& aWhitespace = "\n\t" );
 
+    /// Like Append, but the new item goes right after item aAnchor in the file (e.g. a net
+    /// declaration next to the others, which a reader needs before the first item using it).
+    int InsertAfter( int aAnchor, const std::string& aBody, const std::string& aWhitespace );
+
     /// Whitespace in front of the last present item (to indent appended items alike).
     std::string LastItemWhitespace() const;
     void Commit();
@@ -90,6 +95,7 @@ private:
     std::string          m_prefix;
     std::string          m_suffix;
     std::vector<DocItem> m_items;
+    std::vector<int>     m_order; ///< item indices in file order
     std::vector<Step>    m_undo, m_redo;
     Step                 m_open;
     bool                 m_inStep = false;

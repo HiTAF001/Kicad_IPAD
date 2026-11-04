@@ -2021,3 +2021,111 @@ extern "C" const char* kp_core_version( void )
 {
     return "0.6.0";
 }
+
+
+// ---- Phase 7: update PCB from schematic
+
+#include "sch_to_pcb.h"
+
+struct kp_pcb_update
+{
+    kp::PcbUpdate plan;
+};
+
+
+extern "C" kp_pcb_update* kp_sch_pcb_plan( const kp_board* schematic, const kp_board* board )
+{
+    if( !schematic || !schematic->sch || !board || board->sch )
+        return nullptr;
+
+    kp_pcb_update* u = new kp_pcb_update();
+    kp::PlanPcbUpdate( *schematic->sch, board->board, u->plan );
+    return u;
+}
+
+
+extern "C" void kp_pcb_update_free( kp_pcb_update* update )
+{
+    delete update;
+}
+
+
+extern "C" void kp_pcb_update_get_counts( const kp_pcb_update* update, kp_pcb_update_counts* out )
+{
+    if( !out )
+        return;
+
+    *out = kp_pcb_update_counts {};
+
+    if( !update )
+        return;
+
+    const kp::UpdateCounts& c = update->plan.counts;
+    out->symbols = c.symbols;
+    out->footprints = c.footprints;
+    out->matched_by_path = c.matchedByPath;
+    out->matched_by_reference = c.matchedByReference;
+    out->reference_changes = c.referenceChanges;
+    out->value_changes = c.valueChanges;
+    out->association_changes = c.associationChanges;
+    out->footprint_differs = c.footprintDiffers;
+    out->pads_connected = c.padsConnected;
+    out->pads_reconnected = c.padsReconnected;
+    out->pads_disconnected = c.padsDisconnected;
+    out->nets_added = c.netsAdded;
+    out->nets_renamed = c.netsRenamed;
+    out->nets_removed = c.netsRemoved;
+    out->missing_footprints = c.missingFootprints;
+    out->extra_footprints = c.extraFootprints;
+    out->nets_with_items_left = c.netsWithItemsLeft;
+    out->warnings = c.warnings;
+    out->changes = c.changes;
+    out->incomplete = update->plan.incomplete ? 1 : 0;
+}
+
+
+extern "C" int32_t kp_pcb_update_count( const kp_pcb_update* update )
+{
+    return update ? (int32_t) update->plan.lines.size() : 0;
+}
+
+
+extern "C" void kp_pcb_update_get( const kp_pcb_update* update, int32_t index, kp_pcb_update_line* out )
+{
+    if( !out )
+        return;
+
+    *out = kp_pcb_update_line { 0, 0, -1 };
+
+    if( !update || index < 0 || index >= (int32_t) update->plan.lines.size() )
+        return;
+
+    const kp::UpdateLine& l = update->plan.lines[(size_t) index];
+    out->kind = (int32_t) l.kind;
+    out->severity = (int32_t) l.severity;
+    out->footprint = l.footprint;
+}
+
+
+extern "C" const char* kp_pcb_update_text( const kp_pcb_update* update, int32_t index )
+{
+    if( !update || index < 0 || index >= (int32_t) update->plan.lines.size() )
+        return "";
+
+    return update->plan.lines[(size_t) index].text.c_str();
+}
+
+
+extern "C" int32_t kp_edit_update_from_schematic( kp_doc* doc, const kp_board* board, const kp_board* schematic,
+                                                  char* error, size_t error_size )
+{
+    if( !schematic || !schematic->sch )
+    {
+        copyError( error, error_size, kp::Tr( "No schematic" ) );
+        return 0;
+    }
+
+    return runEdit( doc, board, error, error_size,
+                    [&]( kp::EditTarget& t, std::string& err )
+                    { return kp::UpdatePcbFromSchematic( t, *schematic->sch, err ); } );
+}

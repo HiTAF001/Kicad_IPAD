@@ -30,6 +30,7 @@ add_library( kpcore STATIC
     core/src/sch_pick.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
+    core/src/sch_to_pcb.cpp
 )
 target_include_directories( kpcore PUBLIC core/include PRIVATE core/src )
 
