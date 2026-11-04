@@ -288,11 +288,35 @@ public:
             if( !item.isList() )
                 continue;
 
+            ++m_item;
+            const size_t n[10] = { m_s.symbols.size(),    m_s.lines.size(),  m_s.junctions.size(), m_s.noConnects.size(),
+                                   m_s.busEntries.size(), m_s.labels.size(), m_s.texts.size(),     m_s.graphics.size(),
+                                   m_s.images.size(),     m_s.sheets.size() };
+
             topLevel( item );
+
+            // the file item each element came from (for editing)
+            mark( m_s.symbols, n[0] );
+            mark( m_s.lines, n[1] );
+            mark( m_s.junctions, n[2] );
+            mark( m_s.noConnects, n[3] );
+            mark( m_s.busEntries, n[4] );
+            mark( m_s.labels, n[5] );
+            mark( m_s.texts, n[6] );
+            mark( m_s.graphics, n[7] );
+            mark( m_s.images, n[8] );
+            mark( m_s.sheets, n[9] );
         }
     }
 
 private:
+    template <typename T>
+    void mark( std::vector<T>& aList, size_t aFrom )
+    {
+        for( size_t i = aFrom; i < aList.size(); ++i )
+            aList[i].item = m_item;
+    }
+
     void topLevel( const N& n )
     {
         std::string_view k = n.head();
@@ -877,7 +901,10 @@ private:
         SchStroke st = parseStroke( n.find( "stroke" ) );
 
         for( size_t i = 0; i + 1 < pts.size(); ++i )
+        {
             m_s.lines.push_back( { kind, pts[i], pts[i + 1], st } );
+            m_s.lines.back().point = (int) i;
+        }
     }
 
     void schPolyline( const N& n )
@@ -1160,6 +1187,7 @@ private:
     }
 
     SchScreen& m_s;
+    int        m_item = -1; ///< ordinal of the current top-level list
 };
 
 std::string baseName( const std::string& aPath )
@@ -1388,6 +1416,7 @@ void LoadSchematic( Schematic& aSch, const std::vector<SchFile>& aFiles, size_t 
 
         SchScreen sc;
         sc.fileName = aFiles[file].name;
+        sc.file = (int) file;
         ParseSchematicFile( sc, aFiles[file].data.data(), aFiles[file].data.size() );
 
         // derived symbols ("extends") take their parent's drawing

@@ -10,6 +10,8 @@
 #include "i18n.h"
 #include "sexpr.h"
 
+#include <algorithm>
+
 namespace kp
 {
 
@@ -30,6 +32,7 @@ void Document::Load( const char* aData, size_t aLen )
         DocItem it;
         it.ws.assign( aData + prevEnd, start - prevEnd );
         it.body.assign( aData + start, end - start );
+        m_order.push_back( (int) m_items.size() );
         m_items.push_back( std::move( it ) );
         prevEnd = end;
     }
@@ -52,8 +55,10 @@ std::string Document::Text() const
     out.reserve( total );
     out += m_prefix;
 
-    for( const DocItem& it : m_items )
+    for( int i : m_order )
     {
+        const DocItem& it = m_items[(size_t) i];
+
         if( !it.removed )
         {
             out += it.ws;
@@ -71,10 +76,10 @@ std::vector<int> Document::LiveItems() const
     std::vector<int> out;
     out.reserve( m_items.size() );
 
-    for( size_t i = 0; i < m_items.size(); ++i )
+    for( int i : m_order )
     {
-        if( !m_items[i].removed )
-            out.push_back( (int) i );
+        if( !m_items[(size_t) i].removed )
+            out.push_back( i );
     }
 
     return out;
@@ -152,10 +157,12 @@ void Document::Remove( int aIndex )
 
 std::string Document::LastItemWhitespace() const
 {
-    for( size_t i = m_items.size(); i-- > 0; )
+    for( size_t i = m_order.size(); i-- > 0; )
     {
-        if( !m_items[i].removed )
-            return m_items[i].ws;
+        const DocItem& it = m_items[(size_t) m_order[i]];
+
+        if( !it.removed )
+            return it.ws;
     }
 
     return "\n\t";
@@ -163,6 +170,19 @@ std::string Document::LastItemWhitespace() const
 
 
 int Document::Append( const std::string& aBody, const std::string& aWhitespace )
+{
+    return insertAt( m_order.size(), aBody, aWhitespace );
+}
+
+
+int Document::InsertBefore( int aItem, const std::string& aBody, const std::string& aWhitespace )
+{
+    auto it = std::find( m_order.begin(), m_order.end(), aItem );
+    return insertAt( (size_t) ( it - m_order.begin() ), aBody, aWhitespace );
+}
+
+
+int Document::insertAt( size_t aOrderPos, const std::string& aBody, const std::string& aWhitespace )
 {
     bool autoStep = !m_inStep;
 
@@ -175,6 +195,7 @@ int Document::Append( const std::string& aBody, const std::string& aWhitespace )
     it.removed = true; // does not exist before the step
     m_items.push_back( it );
     int idx = (int) m_items.size() - 1;
+    m_order.insert( m_order.begin() + (std::ptrdiff_t) std::min( aOrderPos, m_order.size() ), idx );
     record( idx, aBody, false );
 
     if( autoStep )

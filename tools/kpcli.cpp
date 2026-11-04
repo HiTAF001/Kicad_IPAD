@@ -1178,12 +1178,357 @@ static int cmdSheets( const char* aPath )
 }
 
 
+/*
+ * Schematic edits through kp_sch_doc, as the app makes them:
+ *   kpcli schedit <root.kicad_sch> <outdir> [--all] [--sheet N] ops...
+ *   ops: move ITEM DX DY | drag ITEM DX DY | rotate ITEM | mirror ITEM x|y | delete ITEM |
+ *        field REF NAME VALUE | labeltext ITEM TEXT | label X Y TEXT [global|hier] [ANGLE] |
+ *        wire X1 Y1 X2 Y2 [X3 Y3 ...] | junction X Y | noconnect X Y |
+ *        route X0 Y0 X1 Y1 ... (pencil stroke: preview, then add) | sheet N | undo | redo
+ *   ITEM: a symbol reference ("R1", "U2A"), KIND:INDEX or KIND@X,Y (the item of that kind
+ *        picked there) with KIND symbol, pin, wire, junction, label, sheet, note, sheetpin;
+ *        several items joined with "+".
+ * Changed files (all schematic files with --all) are written to outdir under their relative
+ * names; the edited project must load again.
+ */
+static int cmdSchEdit( int argc, char** argv )
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path        root = fs::absolute( argv[0], ec );
+    fs::path        dir = root.parent_path();
+    fs::path        outDir = argv[1];
+    kp_fab_input*   in = kp_fab_input_new();
+    std::string     data;
+    bool            all = false;
+    int             sheet = 0;
+
+    if( !readFile( root.string().c_str(), data ) )
+    {
+        fprintf( stderr, "cannot read %s\n", argv[0] );
+        return 1;
+    }
+
+    kp_fab_input_add( in, root.filename().string().c_str(), data.data(), data.size() );
+
+    for( auto it = fs::recursive_directory_iterator( dir, ec ); it != fs::recursive_directory_iterator(); it.increment( ec ) )
+    {
+        if( ec || it.depth() > 3 )
+            continue;
+
+        const fs::path& p = it->path();
+
+        if( p.extension() != ".kicad_sch" || fs::equivalent( p, root, ec ) )
+            continue;
+
+        if( readFile( p.string().c_str(), data ) )
+            kp_fab_input_add( in, fs::relative( p, dir, ec ).generic_string().c_str(), data.data(), data.size() );
+    }
+
+    char        err[512] = { 0 };
+    kp_sch_doc* doc = kp_sch_doc_create( in, 0, err, sizeof( err ) );
+    kp_fab_input_free( in );
+
+    if( !doc )
+    {
+        fprintf( stderr, "%s: %s\n", argv[0], err );
+        return 1;
+    }
+
+    int i = 2;
+
+    for( ; i < argc && argv[i][0] == '-' && argv[i][1] == '-'; ++i )
+    {
+        if( !strcmp( argv[i], "--all" ) )
+            all = true;
+        else if( !strcmp( argv[i], "--sheet" ) && i + 1 < argc )
+            sheet = atoi( argv[++i] );
+    }
+
+    kp_board* b = kp_sch_doc_board( doc, sheet, err, sizeof( err ) );
+
+    if( !b )
+    {
+        fprintf( stderr, "%s\n", err );
+        return 1;
+    }
+
+    auto isNum = []( const char* s )
+    {
+        char* e = nullptr;
+        strtod( s, &e );
+        return e && e != s && *e == 0;
+    };
+
+    static const std::pair<const char*, int> kinds[] = {
+        { "symbol", KP_ITEM_SCH_SYMBOL }, { "pin", KP_ITEM_SCH_PIN },     { "wire", KP_ITEM_SCH_WIRE },
+        { "junction", KP_ITEM_SCH_JUNCTION }, { "label", KP_ITEM_SCH_LABEL }, { "sheet", KP_ITEM_SCH_SHEET },
+        { "note", KP_ITEM_SCH_NOTE },     { "sheetpin", KP_ITEM_SCH_SHEET_PIN }
+    };
+
+    // "R1", "wire:3", "label@12.7,25.4", joined with '+'
+    auto items = [&]( const std::string& aSpec, std::vector<kp_item>& aOut )
+    {
+        size_t start = 0;
+
+        while( start <= aSpec.size() )
+        {
+            size_t      plus = aSpec.find( '+', start );
+            std::string one = aSpec.substr( start, plus == std::string::npos ? std::string::npos : plus - start );
+            start = plus == std::string::npos ? aSpec.size() + 1 : plus + 1;
+            size_t      sep = one.find_first_of( ":@" );
+            int         type = 0;
+
+            for( const auto& k : kinds )
+            {
+                if( sep != std::string::npos && one.compare( 0, sep, k.first ) == 0 && strlen( k.first ) == sep )
+                    type = k.second;
+            }
+
+            if( type && one[sep] == ':' )
+            {
+                aOut.push_back( { type, atoi( one.c_str() + sep + 1 ), -1, 0, -1 } );
+                continue;
+            }
+
+            if( type && one[sep] == '@' )
+            {
+                double  x = 0, y = 0;
+                kp_item hits[32];
+                sscanf( one.c_str() + sep + 1, "%lf,%lf", &x, &y );
+                int  n = kp_board_pick( b, x, y, 0.05, nullptr, 0, 0, 0, hits, 32 );
+                bool found = false;
+
+                for( int k = 0; k < n && !found; ++k )
+                {
+                    if( hits[k].type == type )
+                    {
+                        aOut.push_back( hits[k] );
+                        found = true;
+                    }
+                }
+
+                if( !found )
+                    return false;
+
+                continue;
+            }
+
+            int match = -1;
+
+            for( int f = 0; f < kp_board_footprint_count( b ); ++f )
+            {
+                if( one == kp_board_footprint_ref( b, f ) )
+                    match = f;
+            }
+
+            if( match < 0 )
+                return false;
+
+            aOut.push_back( { KP_ITEM_SCH_SYMBOL, match, -1, 0, -1 } );
+        }
+
+        return !aOut.empty();
+    };
+
+    int failures = 0;
+
+    while( i < argc )
+    {
+        std::string          op = argv[i++];
+        std::vector<kp_item> sel;
+        int                  ok = 0;
+        std::string          desc = op;
+        err[0] = 0;
+
+        auto need = [&]( int n ) { return i + n <= argc; };
+
+        if( ( op == "move" || op == "drag" ) && need( 3 ) )
+        {
+            desc += std::string( " " ) + argv[i] + " " + argv[i + 1] + " " + argv[i + 2];
+            ok = items( argv[i], sel ) && kp_sch_edit_move( doc, b, sel.data(), (int32_t) sel.size(), atof( argv[i + 1] ),
+                                                            atof( argv[i + 2] ), op == "drag", err, sizeof( err ) );
+            i += 3;
+        }
+        else if( op == "rotate" && need( 1 ) )
+        {
+            desc += std::string( " " ) + argv[i];
+            ok = items( argv[i], sel ) && kp_sch_edit_rotate( doc, b, sel.data(), err, sizeof( err ) );
+            i += 1;
+        }
+        else if( op == "mirror" && need( 2 ) )
+        {
+            desc += std::string( " " ) + argv[i] + " " + argv[i + 1];
+            ok = items( argv[i], sel ) && kp_sch_edit_mirror( doc, b, sel.data(), argv[i + 1][0] == 'x', err, sizeof( err ) );
+            i += 2;
+        }
+        else if( op == "delete" && need( 1 ) )
+        {
+            desc += std::string( " " ) + argv[i];
+            ok = items( argv[i], sel ) && kp_sch_edit_delete( doc, b, sel.data(), (int32_t) sel.size(), err, sizeof( err ) );
+            i += 1;
+        }
+        else if( op == "field" && need( 3 ) )
+        {
+            desc += std::string( " " ) + argv[i] + " " + argv[i + 1] + "=" + argv[i + 2];
+            ok = items( argv[i], sel ) && sel[0].type == KP_ITEM_SCH_SYMBOL
+                 && kp_sch_edit_set_field( doc, b, sel[0].index, argv[i + 1], argv[i + 2], err, sizeof( err ) );
+            i += 3;
+        }
+        else if( op == "labeltext" && need( 2 ) )
+        {
+            desc += std::string( " " ) + argv[i] + " " + argv[i + 1];
+            ok = items( argv[i], sel ) && sel[0].type == KP_ITEM_SCH_LABEL
+                 && kp_sch_edit_set_label_text( doc, b, sel[0].index, argv[i + 1], err, sizeof( err ) );
+            i += 2;
+        }
+        else if( op == "label" && need( 3 ) )
+        {
+            double      x = atof( argv[i] ), y = atof( argv[i + 1] );
+            std::string text = argv[i + 2];
+            int         kind = KP_SCH_LABEL_LOCAL, angle = 0;
+            i += 3;
+
+            if( i < argc && ( !strcmp( argv[i], "global" ) || !strcmp( argv[i], "hier" ) || !strcmp( argv[i], "local" ) ) )
+            {
+                kind = !strcmp( argv[i], "global" ) ? KP_SCH_LABEL_GLOBAL : !strcmp( argv[i], "hier" ) ? KP_SCH_LABEL_HIERARCHICAL : KP_SCH_LABEL_LOCAL;
+                ++i;
+            }
+
+            if( i < argc && isNum( argv[i] ) )
+                angle = atoi( argv[i++] );
+
+            desc += " " + text;
+            ok = kp_sch_edit_add_label( doc, b, x, y, text.c_str(), kind, angle, err, sizeof( err ) );
+        }
+        else if( op == "wire" || op == "route" )
+        {
+            std::vector<double> xy;
+
+            while( i < argc && isNum( argv[i] ) )
+                xy.push_back( atof( argv[i++] ) );
+
+            char buf[64];
+
+            for( size_t k = 0; k + 1 < xy.size(); k += 2 )
+            {
+                snprintf( buf, sizeof( buf ), " %g,%g", xy[k], xy[k + 1] );
+                desc += buf;
+            }
+
+            if( op == "route" )
+            {
+                double out[8];
+                int    sk = 0, ek = 0;
+                int    n = kp_sch_edit_route( b, xy.data(), (int32_t) xy.size() / 2, 1.27, 1.0, out, 4, &sk, &ek );
+                desc += " ->";
+
+                for( int k = 0; k < n; ++k )
+                {
+                    snprintf( buf, sizeof( buf ), " %g,%g", out[2 * k], out[2 * k + 1] );
+                    desc += buf;
+                }
+
+                snprintf( buf, sizeof( buf ), " [start %d end %d]", sk, ek );
+                desc += buf;
+                xy.assign( out, out + 2 * std::min( n, 4 ) );
+            }
+
+            ok = xy.size() >= 4 && kp_sch_edit_add_wire( doc, b, xy.data(), (int32_t) xy.size() / 2, err, sizeof( err ) );
+        }
+        else if( ( op == "junction" || op == "noconnect" ) && need( 2 ) )
+        {
+            double x = atof( argv[i] ), y = atof( argv[i + 1] );
+            desc += std::string( " " ) + argv[i] + "," + argv[i + 1];
+            ok = op == "junction" ? kp_sch_edit_add_junction( doc, b, x, y, err, sizeof( err ) )
+                                  : kp_sch_edit_add_no_connect( doc, b, x, y, err, sizeof( err ) );
+            i += 2;
+        }
+        else if( op == "sheet" && need( 1 ) )
+        {
+            sheet = atoi( argv[i++] );
+            ok = 1;
+        }
+        else if( op == "undo" )
+        {
+            desc += std::string( " (" ) + kp_sch_doc_undo_label( doc ) + ")";
+            ok = kp_sch_doc_undo( doc );
+        }
+        else if( op == "redo" )
+        {
+            desc += std::string( " (" ) + kp_sch_doc_redo_label( doc ) + ")";
+            ok = kp_sch_doc_redo( doc );
+        }
+        else
+        {
+            fprintf( stderr, "bad op %s\n", op.c_str() );
+            return 2;
+        }
+
+        if( ok && op != "undo" && op != "redo" && op != "sheet" )
+            desc += std::string( " [" ) + kp_sch_doc_undo_label( doc ) + "]";
+
+        printf( "%s: %s %s\n", desc.c_str(), ok ? "ok" : "FAILED", err );
+        failures += !ok;
+
+        // a fresh board of the edited document, as the app builds it
+        kp_board* nb = kp_sch_doc_board( doc, sheet, err, sizeof( err ) );
+
+        if( !nb )
+        {
+            fprintf( stderr, "rebuild failed: %s\n", err );
+            return 1;
+        }
+
+        kp_board_free( b );
+        b = nb;
+    }
+
+    // write the files, then the project must load again
+    kp_fab_input* again = kp_fab_input_new();
+
+    for( int f = 0; f < kp_sch_doc_file_count( doc ); ++f )
+    {
+        size_t      len = 0;
+        const char* text = kp_sch_doc_file_text( doc, f, &len );
+        std::string name = kp_sch_doc_file_name( doc, f );
+        kp_fab_input_add( again, name.c_str(), text, len );
+
+        if( !all && !kp_sch_doc_file_modified( doc, f ) )
+            continue;
+
+        fs::path out = outDir / name;
+        fs::create_directories( out.parent_path(), ec );
+        std::ofstream o( out, std::ios::binary );
+        o.write( text, (std::streamsize) len );
+        printf( "wrote %s (%zu bytes%s)\n", out.string().c_str(), len, kp_sch_doc_file_modified( doc, f ) ? ", modified" : "" );
+    }
+
+    kp_board* check = kp_board_load_sch( again, 0, 0, err, sizeof( err ) );
+    kp_fab_input_free( again );
+
+    if( !check )
+    {
+        fprintf( stderr, "edited schematic does not load: %s\n", err );
+        return 1;
+    }
+
+    kp_board_free( check );
+    kp_board_free( b );
+    kp_sch_doc_free( doc );
+    return failures ? 3 : 0;
+}
+
+
 int main( int argc, char** argv )
 {
     loadTranslations();
 
     if( argc >= 4 && !strcmp( argv[1], "edit" ) )
         return cmdEdit( argc - 2, argv + 2 );
+
+    if( argc >= 4 && !strcmp( argv[1], "schedit" ) )
+        return cmdSchEdit( argc - 2, argv + 2 );
 
     if( argc >= 4 && !strcmp( argv[1], "fab" ) )
         return cmdFab( argc - 2, argv + 2 );

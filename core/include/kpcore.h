@@ -475,6 +475,93 @@ const char* kp_fab_warning( const kp_fab* fab, int32_t index );
 
 const char* kp_core_version( void );
 
+/* ------------------------------------------------------------------------------------------
+ * Schematic editing. A kp_sch_doc holds the files of a schematic project (lossless: unedited
+ * items are written back byte for byte) with one undo history across them. Boards for its
+ * sheets come from kp_sch_doc_board; edits take the doc and a board built from its current
+ * state (refused when the board is stale), change only the doc, and the caller then builds a
+ * fresh board. Items are those kp_board_pick reports on that board (KP_ITEM_SCH_*); a pin
+ * stands for its symbol and a sheet pin for its sheet, except when deleting. Coordinates are
+ * mm on the sheet. All edit functions return 1 on success, 0 on failure (message in error).
+ * ------------------------------------------------------------------------------------------ */
+typedef struct kp_sch_doc kp_sch_doc;
+
+/** Label kinds for kp_sch_edit_add_label. */
+enum
+{
+    KP_SCH_LABEL_LOCAL = 0,
+    KP_SCH_LABEL_GLOBAL = 1,
+    KP_SCH_LABEL_HIERARCHICAL = 2
+};
+
+/** What an end of a routed wire attaches to (kp_sch_edit_route). */
+enum
+{
+    KP_SCH_ANCHOR_NONE = 0, /**< a grid point */
+    KP_SCH_ANCHOR_PIN = 1,
+    KP_SCH_ANCHOR_WIRE_END = 2,
+    KP_SCH_ANCHOR_WIRE = 3, /**< a point inside a wire */
+    KP_SCH_ANCHOR_LABEL = 4,
+    KP_SCH_ANCHOR_JUNCTION = 5,
+    KP_SCH_ANCHOR_SHEET_PIN = 6,
+    KP_SCH_ANCHOR_BUS_ENTRY = 7
+};
+
+/** files: the root sheet and its sub-sheet files (as for kp_board_load_sch). */
+kp_sch_doc* kp_sch_doc_create( const kp_fab_input* files, int32_t root, char* error, size_t error_size );
+void        kp_sch_doc_free( kp_sch_doc* doc );
+/** A board for one sheet of the current state (sheets of one state share the parsed schematic). */
+kp_board*   kp_sch_doc_board( kp_sch_doc* doc, int32_t sheet, char* error, size_t error_size );
+int32_t     kp_sch_doc_board_current( const kp_sch_doc* doc, const kp_board* board );
+int32_t     kp_sch_doc_file_count( const kp_sch_doc* doc );
+const char* kp_sch_doc_file_name( const kp_sch_doc* doc, int32_t file );
+const char* kp_sch_doc_file_text( kp_sch_doc* doc, int32_t file, size_t* length ); /**< valid until the next call */
+int32_t     kp_sch_doc_file_modified( const kp_sch_doc* doc, int32_t file );
+int32_t     kp_sch_doc_modified( const kp_sch_doc* doc );                /**< any file */
+void        kp_sch_doc_mark_saved( kp_sch_doc* doc, int32_t file );     /**< file -1 = all files */
+int32_t     kp_sch_doc_can_undo( const kp_sch_doc* doc );
+int32_t     kp_sch_doc_can_redo( const kp_sch_doc* doc );
+const char* kp_sch_doc_undo_label( kp_sch_doc* doc );
+const char* kp_sch_doc_redo_label( kp_sch_doc* doc );
+int32_t     kp_sch_doc_undo( kp_sch_doc* doc );
+int32_t     kp_sch_doc_redo( kp_sch_doc* doc );
+
+/** Move items; with drag, wires on their connection points follow (bent where needed). */
+int32_t kp_sch_edit_move( kp_sch_doc* doc, const kp_board* board, const kp_item* items, int32_t count, double dx,
+                          double dy, int32_t drag, char* error, size_t error_size );
+/** Rotate a symbol or label 90 degrees counter-clockwise (KiCad's R). */
+int32_t kp_sch_edit_rotate( kp_sch_doc* doc, const kp_board* board, const kp_item* item, char* error,
+                            size_t error_size );
+/** Mirror a symbol or label: mirror_x = 1 flips top and bottom (KiCad's X), 0 left and right (Y). */
+int32_t kp_sch_edit_mirror( kp_sch_doc* doc, const kp_board* board, const kp_item* item, int32_t mirror_x,
+                            char* error, size_t error_size );
+int32_t kp_sch_edit_delete( kp_sch_doc* doc, const kp_board* board, const kp_item* items, int32_t count,
+                            char* error, size_t error_size );
+/** Set an existing field of symbol (index on the board's sheet); "Reference" is per sheet. */
+int32_t kp_sch_edit_set_field( kp_sch_doc* doc, const kp_board* board, int32_t symbol, const char* name,
+                               const char* value, char* error, size_t error_size );
+int32_t kp_sch_edit_set_label_text( kp_sch_doc* doc, const kp_board* board, int32_t label, const char* text,
+                                    char* error, size_t error_size );
+/** A wire polyline, xy = x0,y0,x1,y1,...; splits wires its ends land on, adds junctions. */
+int32_t kp_sch_edit_add_wire( kp_sch_doc* doc, const kp_board* board, const double* xy, int32_t point_count,
+                              char* error, size_t error_size );
+/** kind: KP_SCH_LABEL_*; angle: 0 = text right of the anchor, 90 up, 180 left, 270 down. */
+int32_t kp_sch_edit_add_label( kp_sch_doc* doc, const kp_board* board, double x, double y, const char* text,
+                               int32_t kind, int32_t angle, char* error, size_t error_size );
+int32_t kp_sch_edit_add_no_connect( kp_sch_doc* doc, const kp_board* board, double x, double y, char* error,
+                                    size_t error_size );
+int32_t kp_sch_edit_add_junction( kp_sch_doc* doc, const kp_board* board, double x, double y, char* error,
+                                  size_t error_size );
+/**
+ * Pencil preview (no change): a stroke (xy pairs) as an orthogonal wire with at most two bends.
+ * The ends snap to connection points within snap_radius, else to the grid (mm, 0 = 1.27).
+ * Returns the number of points (0 = no wire; at most 4), writes at most max_points of them to
+ * out_xy and what the ends attach to (KP_SCH_ANCHOR_*). Pass the points to kp_sch_edit_add_wire.
+ */
+int32_t kp_sch_edit_route( const kp_board* board, const double* xy, int32_t point_count, double grid,
+                           double snap_radius, double* out_xy, int32_t max_points, int32_t* start_kind,
+                           int32_t* end_kind );
+
 #ifdef __cplusplus
 }
 #endif

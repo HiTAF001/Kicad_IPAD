@@ -2021,3 +2021,370 @@ extern "C" const char* kp_core_version( void )
 {
     return "0.6.0";
 }
+
+
+// ---- Phase 7: schematic editing ---------------------------------------------------------------
+
+#include "sch_document.h"
+#include "sch_edit.h"
+
+struct kp_sch_doc
+{
+    kp::SchDocument doc;
+    std::string     textScratch;
+    std::string     labelScratch;
+};
+
+
+extern "C" kp_sch_doc* kp_sch_doc_create( const kp_fab_input* files, int32_t root, char* error, size_t error_size )
+{
+    if( !files || files->files.empty() || root < 0 || root >= (int32_t) files->files.size() )
+    {
+        copyError( error, error_size, kp::Tr( "The file is empty" ) );
+        return nullptr;
+    }
+
+    kp_sch_doc* d = new( std::nothrow ) kp_sch_doc();
+
+    if( !d )
+    {
+        copyError( error, error_size, kp::Tr( "Out of memory" ) );
+        return nullptr;
+    }
+
+    try
+    {
+        std::vector<kp::SchFile> in;
+
+        for( const kp::FabInput& f : files->files )
+            in.push_back( { f.name, f.data } );
+
+        d->doc.Load( in, (size_t) root );
+        d->doc.Build(); // the root sheet must read
+    }
+    catch( const std::exception& e )
+    {
+        copyError( error, error_size, kp::TrF( "The file could not be read: {0}", { e.what() } ) );
+        delete d;
+        return nullptr;
+    }
+
+    return d;
+}
+
+
+extern "C" void kp_sch_doc_free( kp_sch_doc* doc )
+{
+    delete doc;
+}
+
+
+extern "C" kp_board* kp_sch_doc_board( kp_sch_doc* doc, int32_t sheet, char* error, size_t error_size )
+{
+    if( !doc )
+    {
+        copyError( error, error_size, kp::Tr( "No document" ) );
+        return nullptr;
+    }
+
+    std::shared_ptr<const kp::Schematic> sch;
+
+    try
+    {
+        sch = doc->doc.Build();
+    }
+    catch( const std::bad_alloc& )
+    {
+        copyError( error, error_size, kp::Tr( "Out of memory (the board is too large)" ) );
+        return nullptr;
+    }
+    catch( const std::exception& e )
+    {
+        copyError( error, error_size, kp::TrF( "The file could not be read: {0}", { e.what() } ) );
+        return nullptr;
+    }
+
+    kp_board* b = buildSheet( sch, sheet, error, error_size );
+
+    if( b )
+    {
+        b->docOwner = doc;
+        b->docState = doc->doc.StateId();
+    }
+
+    return b;
+}
+
+
+extern "C" int32_t kp_sch_doc_board_current( const kp_sch_doc* doc, const kp_board* board )
+{
+    return doc && board && board->sch && board->docOwner == doc && board->docState == doc->doc.StateId() ? 1 : 0;
+}
+
+
+extern "C" int32_t kp_sch_doc_file_count( const kp_sch_doc* doc )
+{
+    return doc ? (int32_t) doc->doc.FileCount() : 0;
+}
+
+
+extern "C" const char* kp_sch_doc_file_name( const kp_sch_doc* doc, int32_t file )
+{
+    return doc && file >= 0 && file < (int32_t) doc->doc.FileCount() ? doc->doc.FileName( (size_t) file ).c_str() : "";
+}
+
+
+extern "C" const char* kp_sch_doc_file_text( kp_sch_doc* doc, int32_t file, size_t* length )
+{
+    if( !doc || file < 0 || file >= (int32_t) doc->doc.FileCount() )
+    {
+        if( length )
+            *length = 0;
+
+        return "";
+    }
+
+    doc->textScratch = doc->doc.FileText( (size_t) file );
+
+    if( length )
+        *length = doc->textScratch.size();
+
+    return doc->textScratch.c_str();
+}
+
+
+extern "C" int32_t kp_sch_doc_file_modified( const kp_sch_doc* doc, int32_t file )
+{
+    return doc && file >= 0 && file < (int32_t) doc->doc.FileCount() && doc->doc.FileModified( (size_t) file ) ? 1 : 0;
+}
+
+
+extern "C" int32_t kp_sch_doc_modified( const kp_sch_doc* doc ) { return doc && doc->doc.Modified() ? 1 : 0; }
+extern "C" void    kp_sch_doc_mark_saved( kp_sch_doc* doc, int32_t file ) { if( doc ) doc->doc.MarkSaved( file ); }
+extern "C" int32_t kp_sch_doc_can_undo( const kp_sch_doc* doc ) { return doc && doc->doc.CanUndo() ? 1 : 0; }
+extern "C" int32_t kp_sch_doc_can_redo( const kp_sch_doc* doc ) { return doc && doc->doc.CanRedo() ? 1 : 0; }
+extern "C" int32_t kp_sch_doc_undo( kp_sch_doc* doc ) { return doc && doc->doc.Undo() ? 1 : 0; }
+extern "C" int32_t kp_sch_doc_redo( kp_sch_doc* doc ) { return doc && doc->doc.Redo() ? 1 : 0; }
+
+
+extern "C" const char* kp_sch_doc_undo_label( kp_sch_doc* doc )
+{
+    if( !doc )
+        return "";
+
+    doc->labelScratch = doc->doc.UndoLabel();
+    return doc->labelScratch.c_str();
+}
+
+
+extern "C" const char* kp_sch_doc_redo_label( kp_sch_doc* doc )
+{
+    if( !doc )
+        return "";
+
+    doc->labelScratch = doc->doc.RedoLabel();
+    return doc->labelScratch.c_str();
+}
+
+
+template <typename F>
+static int32_t runSchEdit( kp_sch_doc* doc, const kp_board* board, char* error, size_t error_size, F&& op )
+{
+    if( !doc || !board )
+    {
+        copyError( error, error_size, kp::Tr( "No document" ) );
+        return 0;
+    }
+
+    if( !kp_sch_doc_board_current( doc, board ) )
+    {
+        copyError( error, error_size,
+                   kp::Tr( "The schematic view is not up to date yet; wait a moment and try again" ) );
+        return 0;
+    }
+
+    try
+    {
+        kp::SchEditTarget t { doc->doc, *board->sch, board->sheet };
+        std::string       err;
+
+        if( !op( t, err ) )
+        {
+            copyError( error, error_size, err );
+            return 0;
+        }
+    }
+    catch( const std::exception& e )
+    {
+        doc->doc.Cancel();
+        copyError( error, error_size, kp::TrF( "Edit error: {0}", { e.what() } ) );
+        return 0;
+    }
+
+    return 1;
+}
+
+
+static std::vector<kp::SchItemRef> schItems( const kp_item* items, int32_t count )
+{
+    std::vector<kp::SchItemRef> out;
+
+    for( int32_t i = 0; items && i < count; ++i )
+        out.push_back( { (kp::ItemType) items[i].type, items[i].index } );
+
+    return out;
+}
+
+
+extern "C" int32_t kp_sch_edit_move( kp_sch_doc* doc, const kp_board* board, const kp_item* items, int32_t count,
+                                     double dx, double dy, int32_t drag, char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchMoveItems( t, schItems( items, count ), dx, dy, drag != 0, err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_rotate( kp_sch_doc* doc, const kp_board* board, const kp_item* item, char* error,
+                                       size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       {
+                           std::vector<kp::SchItemRef> r = schItems( item, 1 );
+                           return kp::SchRotateItem( t, r.empty() ? kp::SchItemRef() : r[0], err );
+                       } );
+}
+
+
+extern "C" int32_t kp_sch_edit_mirror( kp_sch_doc* doc, const kp_board* board, const kp_item* item, int32_t mirror_x,
+                                       char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       {
+                           std::vector<kp::SchItemRef> r = schItems( item, 1 );
+                           return kp::SchMirrorItem( t, r.empty() ? kp::SchItemRef() : r[0], mirror_x != 0, err );
+                       } );
+}
+
+
+extern "C" int32_t kp_sch_edit_delete( kp_sch_doc* doc, const kp_board* board, const kp_item* items, int32_t count,
+                                       char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchDeleteItems( t, schItems( items, count ), err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_set_field( kp_sch_doc* doc, const kp_board* board, int32_t symbol, const char* name,
+                                          const char* value, char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchSetField( t, symbol, name ? name : "", value ? value : "", err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_set_label_text( kp_sch_doc* doc, const kp_board* board, int32_t label,
+                                               const char* text, char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchSetLabelText( t, label, text ? text : "", err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_add_wire( kp_sch_doc* doc, const kp_board* board, const double* xy,
+                                         int32_t point_count, char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       {
+                           std::vector<kp::Pt> pts;
+
+                           for( int32_t i = 0; xy && i < point_count; ++i )
+                               pts.emplace_back( xy[2 * i], xy[2 * i + 1] );
+
+                           return kp::SchAddWire( t, pts, false, err );
+                       } );
+}
+
+
+extern "C" int32_t kp_sch_edit_add_label( kp_sch_doc* doc, const kp_board* board, double x, double y,
+                                          const char* text, int32_t kind, int32_t angle, char* error,
+                                          size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       {
+                           kp::SchLabelKind k = kind == KP_SCH_LABEL_GLOBAL         ? kp::SchLabelKind::GLOBAL
+                                                : kind == KP_SCH_LABEL_HIERARCHICAL ? kp::SchLabelKind::HIERARCHICAL
+                                                                                    : kp::SchLabelKind::LOCAL;
+                           return kp::SchAddLabel( t, kp::Pt( x, y ), text ? text : "", k, angle, err );
+                       } );
+}
+
+
+extern "C" int32_t kp_sch_edit_add_no_connect( kp_sch_doc* doc, const kp_board* board, double x, double y,
+                                               char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchAddNoConnect( t, kp::Pt( x, y ), err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_add_junction( kp_sch_doc* doc, const kp_board* board, double x, double y,
+                                             char* error, size_t error_size )
+{
+    return runSchEdit( doc, board, error, error_size,
+                       [&]( kp::SchEditTarget& t, std::string& err )
+                       { return kp::SchAddJunction( t, kp::Pt( x, y ), err ); } );
+}
+
+
+extern "C" int32_t kp_sch_edit_route( const kp_board* board, const double* xy, int32_t point_count, double grid,
+                                      double snap_radius, double* out_xy, int32_t max_points, int32_t* start_kind,
+                                      int32_t* end_kind )
+{
+    if( start_kind )
+        *start_kind = KP_SCH_ANCHOR_NONE;
+
+    if( end_kind )
+        *end_kind = KP_SCH_ANCHOR_NONE;
+
+    if( !board || !board->sch || !xy || point_count < 2 )
+        return 0;
+
+    std::vector<kp::Pt> stroke;
+
+    for( int32_t i = 0; i < point_count; ++i )
+        stroke.emplace_back( xy[2 * i], xy[2 * i + 1] );
+
+    kp::SchRoute r;
+
+    try
+    {
+        r = kp::SchRouteStroke( *board->sch, board->sheet, stroke, grid, snap_radius );
+    }
+    catch( const std::exception& )
+    {
+        return 0;
+    }
+
+    if( start_kind )
+        *start_kind = (int32_t) r.start;
+
+    if( end_kind )
+        *end_kind = (int32_t) r.end;
+
+    for( int32_t i = 0; out_xy && i < (int32_t) r.points.size() && i < max_points; ++i )
+    {
+        out_xy[2 * i] = r.points[(size_t) i].x;
+        out_xy[2 * i + 1] = r.points[(size_t) i].y;
+    }
+
+    return (int32_t) r.points.size();
+}

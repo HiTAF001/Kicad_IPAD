@@ -12,7 +12,8 @@
  * replace, remove or append whole items; everything else is written back byte for byte, so
  * data Netloom does not understand (stackup, net classes, 3D models, groups, ...) survives and
  * diffs stay small. Item indices never change (removed items become tombstones), which keeps
- * undo/redo simple.
+ * undo/redo simple. New items are appended or inserted next to an existing item; the file
+ * order is kept apart from the indices.
  */
 #ifndef NETLOOM_DOCUMENT_H
 #define NETLOOM_DOCUMENT_H
@@ -54,6 +55,9 @@ public:
     void Remove( int aIndex );
     int  Append( const std::string& aBody, const std::string& aWhitespace = "\n\t" );
 
+    /// Insert a new item in front of item aItem in file order (at the end if aItem is not found).
+    int InsertBefore( int aItem, const std::string& aBody, const std::string& aWhitespace );
+
     /// Whitespace in front of the last present item (to indent appended items alike).
     std::string LastItemWhitespace() const;
     void Commit();
@@ -65,6 +69,9 @@ public:
     std::string RedoLabel() const { return m_redo.empty() ? std::string() : m_redo.back().label; }
     bool        Undo();
     bool        Redo();
+
+    /// Forget the redo steps (a document that shares one history with others).
+    void ClearRedo() { m_redo.clear(); }
 
     bool Modified() const { return m_state != m_savedState; }
     void MarkSaved() { m_savedState = m_state; }
@@ -86,10 +93,12 @@ private:
     };
 
     void record( int aIndex, const std::string& aNewBody, bool aNewRemoved );
+    int  insertAt( size_t aOrderPos, const std::string& aBody, const std::string& aWhitespace );
 
     std::string          m_prefix;
     std::string          m_suffix;
     std::vector<DocItem> m_items;
+    std::vector<int>     m_order; ///< item indices in file order
     std::vector<Step>    m_undo, m_redo;
     Step                 m_open;
     bool                 m_inStep = false;
