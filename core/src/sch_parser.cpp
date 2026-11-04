@@ -288,11 +288,36 @@ public:
             if( !item.isList() )
                 continue;
 
+            ++m_item;
+            const size_t n0 = m_s.symbols.size(), n1 = m_s.lines.size(), n2 = m_s.junctions.size();
+            const size_t n3 = m_s.noConnects.size(), n4 = m_s.busEntries.size(), n5 = m_s.labels.size();
+            const size_t n6 = m_s.texts.size(), n7 = m_s.graphics.size(), n8 = m_s.images.size();
+            const size_t n9 = m_s.sheets.size();
+
             topLevel( item );
+
+            // remember which top-level item each element came from (for editing)
+            markItem( m_s.symbols, n0 );
+            markItem( m_s.lines, n1 );
+            markItem( m_s.junctions, n2 );
+            markItem( m_s.noConnects, n3 );
+            markItem( m_s.busEntries, n4 );
+            markItem( m_s.labels, n5 );
+            markItem( m_s.texts, n6 );
+            markItem( m_s.graphics, n7 );
+            markItem( m_s.images, n8 );
+            markItem( m_s.sheets, n9 );
         }
     }
 
 private:
+    template <typename T>
+    void markItem( std::vector<T>& aList, size_t aFrom )
+    {
+        for( size_t i = aFrom; i < aList.size(); ++i )
+            aList[i].docItem = m_item;
+    }
+
     void topLevel( const N& n )
     {
         std::string_view k = n.head();
@@ -1159,6 +1184,7 @@ private:
     }
 
     SchScreen& m_s;
+    int        m_item = -1; ///< index of the current top-level item
 };
 
 std::string baseName( const std::string& aPath )
@@ -1387,6 +1413,7 @@ void LoadSchematic( Schematic& aSch, const std::vector<SchFile>& aFiles, size_t 
 
         SchScreen sc;
         sc.fileName = aFiles[file].name;
+        sc.sourceFile = (int) file;
         ParseSchematicFile( sc, aFiles[file].data.data(), aFiles[file].data.size() );
 
         // derived symbols ("extends") take their parent's drawing

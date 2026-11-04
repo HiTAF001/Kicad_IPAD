@@ -86,6 +86,7 @@ struct SchGraphic
     double      textAngle = 0.0;
     SchTextAttr attr;
     double      margins[4] = { 0, 0, 0, 0 }; ///< TEXTBOX: left, top, right, bottom
+    int         docItem = -1; ///< sheet graphics: top-level item of the file (parse order)
 };
 
 enum class PinType : uint8_t
@@ -167,6 +168,7 @@ struct SchSymbol
     std::vector<SchField>       fields; ///< positions in the unrotated symbol frame + pos
     std::vector<SymbolInstance> instances;
     std::map<std::string, std::string> pinAlternates; ///< pin number -> alternate name
+    int          docItem = -1; ///< top-level item of the file it came from (in parse order)
 };
 
 struct SchLine
@@ -176,6 +178,7 @@ struct SchLine
     Kind      kind = WIRE;
     Pt        a, b;
     SchStroke stroke;
+    int       docItem = -1; ///< top-level item of the file it came from (in parse order)
 };
 
 struct SchJunction
@@ -183,11 +186,13 @@ struct SchJunction
     Pt     pos;
     double diameter = 0.0; ///< 0 = default
     Color  color { 0, 0, 0, 0 };
+    int    docItem = -1;
 };
 
 struct SchNoConnect
 {
-    Pt pos;
+    Pt  pos;
+    int docItem = -1;
 };
 
 struct SchBusEntry
@@ -195,6 +200,7 @@ struct SchBusEntry
     Pt        pos;
     Pt        size { 2.54, 2.54 };
     SchStroke stroke;
+    int       docItem = -1;
 };
 
 enum class LabelShape : uint8_t { INPUT, OUTPUT, BIDI, TRISTATE, PASSIVE, DOT, ROUND, DIAMOND, RECTANGLE };
@@ -214,6 +220,7 @@ struct SchLabel
     double      pinLength = 2.54; ///< directive labels
     std::vector<SchField> fields;
     std::string uuid;
+    int         docItem = -1;
 };
 
 struct SchText
@@ -223,6 +230,7 @@ struct SchText
     double      angle = 0.0;
     SchTextAttr attr;
     bool        isPrivate = false;
+    int         docItem = -1;
 };
 
 struct SchImage
@@ -230,6 +238,7 @@ struct SchImage
     Pt     pos;      ///< centre
     double scale = 1.0;
     double width = 0.0, height = 0.0; ///< mm, from the PNG header (0 = unknown)
+    int    docItem = -1;
 };
 
 struct SchSheetPin
@@ -253,6 +262,7 @@ struct SchSheet
     std::string name;      ///< sheet name
     std::string file;      ///< sub-sheet file, relative to this one
     std::map<std::string, std::string> pages; ///< instance path -> page number
+    int         docItem = -1;
 };
 
 struct TitleBlock
@@ -265,6 +275,7 @@ struct TitleBlock
 struct SchScreen
 {
     std::string fileName;
+    int         sourceFile = -1; ///< index of the file in the list given to LoadSchematic
     int         version = 0;
     std::string generator, generatorVersion;
     std::string uuid;

@@ -28,6 +28,8 @@ add_library( kpcore STATIC
     core/src/sch_mesh.cpp
     core/src/sch_connectivity.cpp
     core/src/sch_pick.cpp
+    core/src/sch_document.cpp
+    core/src/sch_edit.cpp
     core/src/i18n.cpp
     core/src/kpcore.cpp
 )
@@ -62,6 +64,13 @@ add_test( NAME edit_undo_roundtrip
           COMMAND ${CMAKE_COMMAND}
                   -DKPCLI=$<TARGET_FILE:kpcli> -DIN=${NETLOOM_PIC} -DOUT=${CMAKE_BINARY_DIR}/undo_roundtrip.kicad_pcb
                   -P ${CMAKE_SOURCE_DIR}/tools/edit_roundtrip.cmake )
+
+# Schematic edits over a hierarchy, undo of all of them, redo: byte for byte.
+add_test( NAME sch_edit_undo_roundtrip
+          COMMAND ${CMAKE_COMMAND}
+                  -DKPCLI=$<TARGET_FILE:kpcli> -DIN=${CMAKE_SOURCE_DIR}/samples/pic_programmer.kicad_sch
+                  -DOUT=${CMAKE_BINARY_DIR}/sch_undo_roundtrip
+                  -P ${CMAKE_SOURCE_DIR}/tools/sch_edit_roundtrip.cmake )
 
 # Fabrication files written for a board must read back as a Gerber board (folder and zip).
 add_test( NAME fab_gerber_roundtrip

@@ -59,8 +59,9 @@ static bool readFile( const char* aPath, std::string& aOut )
 
 static int g_sheet = 0; // schematic sheet to open (--sheet N)
 
-/// A schematic and every .kicad_sch file below its folder (candidates for its sub-sheets).
-static kp_board* loadSchematic( const char* aPath )
+/// A schematic (index 0) and every .kicad_sch file below its folder (candidates for its
+/// sub-sheets), named relative to that folder.
+static kp_fab_input* schematicInput( const char* aPath, int& aCount )
 {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -68,7 +69,8 @@ static kp_board* loadSchematic( const char* aPath )
     fs::path        dir = root.parent_path();
     kp_fab_input*   in = kp_fab_input_new();
     std::string     data;
-    int             rootIndex = 0, count = 0;
+    int&            count = aCount;
+    count = 0;
 
     if( readFile( root.string().c_str(), data ) )
     {
@@ -93,8 +95,17 @@ static kp_board* loadSchematic( const char* aPath )
         }
     }
 
-    char      err[512] = { 0 };
-    kp_board* b = count ? kp_board_load_sch( in, rootIndex, g_sheet, err, sizeof( err ) ) : nullptr;
+    return in;
+}
+
+
+/// A schematic and every .kicad_sch file below its folder (candidates for its sub-sheets).
+static kp_board* loadSchematic( const char* aPath )
+{
+    int           count = 0;
+    kp_fab_input* in = schematicInput( aPath, count );
+    char          err[512] = { 0 };
+    kp_board*     b = count ? kp_board_load_sch( in, 0, g_sheet, err, sizeof( err ) ) : nullptr;
     kp_fab_input_free( in );
 
     if( !b )
@@ -962,6 +973,439 @@ static int cmdEdit( int argc, char** argv )
 }
 
 
+/// Symbol of a schematic board by reference ("R1", "U1A") or by index ("#3"); -1 if none.
+static int findSymbol( kp_board* b, const char* aRef )
+{
+    if( aRef[0] == '#' && aRef[1] >= '0' && aRef[1] <= '9' )
+        return atoi( aRef + 1 ) < kp_board_footprint_count( b ) ? atoi( aRef + 1 ) : -1;
+
+    for( int i = 0; i < kp_board_footprint_count( b ); ++i )
+    {
+        if( !strcmp( kp_board_footprint_ref( b, i ), aRef ) || !strcmp( kp_sch_symbol_field_value( b, i, 0 ), aRef ) )
+            return i;
+    }
+
+    return -1;
+}
+
+
+static bool isNumber( const char* aText )
+{
+    char* end = nullptr;
+    strtod( aText, &end );
+    return end && end != aText && *end == 0;
+}
+
+
+/// "REF:NUMBER" of a flat pin (from its description).
+static std::string pinName( kp_board* b, int aPin, int aSymbol )
+{
+    kp_item     it { KP_ITEM_SCH_PIN, aPin, aSymbol, 0, -1 };
+    std::string info = kp_board_item_info( b, &it );
+    size_t      n = info.find( "\nNumber\t" );
+    std::string number = n == std::string::npos ? "?" : info.substr( n + 8, info.find( '\n', n + 8 ) - n - 8 );
+    return std::string( kp_sch_symbol_field_value( b, aSymbol, 0 ) ) + ":" + number;
+}
+
+
+/// What sits on a point of the sheet: bit 1 wire, 2 label, 4 junction, 8 note (no-connect,
+/// bus entry), 16 sheet pin, 32 a pin of another symbol, 64 another symbol.
+static int whatIsAt( kp_board* b, double x, double y, int aSymbol )
+{
+    kp_item items[32];
+    int     n = kp_board_pick( b, x, y, 0.01, nullptr, 0, 0, 0, items, 32 );
+    int     mask = 0;
+
+    for( int i = 0; i < n; ++i )
+    {
+        switch( items[i].type )
+        {
+        case KP_ITEM_SCH_WIRE: mask |= 1; break;
+        case KP_ITEM_SCH_LABEL: mask |= 2; break;
+        case KP_ITEM_SCH_JUNCTION: mask |= 4; break;
+        case KP_ITEM_SCH_NOTE: mask |= 8; break;
+        case KP_ITEM_SCH_SHEET_PIN: mask |= 16; break;
+        case KP_ITEM_SCH_PIN: mask |= items[i].footprint != aSymbol ? 32 : 0; break;
+        case KP_ITEM_SCH_SYMBOL: mask |= items[i].index != aSymbol ? 64 : 0; break; // e.g. a power symbol
+        default: break;
+        }
+    }
+
+    return mask;
+}
+
+
+/// schedit <in.kicad_sch> <out-dir> [--sheet N] ops...: edit a schematic hierarchy through a
+/// kp_sch_doc and write every file of it into out-dir.
+static int cmdSchEdit( int argc, char** argv )
+{
+    namespace fs = std::filesystem;
+    const char* inPath = argv[0];
+    fs::path    outDir = argv[1];
+    int         count = 0;
+    char        err[512] = { 0 };
+    int         sheet = g_sheet;
+    kp_fab_input* in = schematicInput( inPath, count );
+    kp_sch_doc*   doc = count ? kp_sch_doc_create( in, 0, err, sizeof( err ) ) : nullptr;
+    kp_fab_input_free( in );
+
+    if( !doc )
+    {
+        fprintf( stderr, "%s: %s\n", inPath, err );
+        return 1;
+    }
+
+    kp_board* b = kp_board_load_sch_doc( doc, sheet, err, sizeof( err ) );
+
+    if( !b )
+    {
+        fprintf( stderr, "%s\n", err );
+        return 1;
+    }
+
+    int failures = 0;
+
+    for( int i = 2; i < argc; )
+    {
+        std::string op = argv[i++];
+        int         ok = 0;
+        auto        has = [&]( int n ) { return i + n <= argc; };
+        err[0] = 0;
+
+        if( op == "--sheet" && has( 1 ) )
+        {
+            sheet = atoi( argv[i++] );
+            ok = 1;
+        }
+        else if( op == "move" && has( 3 ) )
+        {
+            kp_item it { KP_ITEM_SCH_SYMBOL, findSymbol( b, argv[i] ), -1, 0, -1 };
+            ok = kp_sch_edit_move( doc, b, &it, 1, atof( argv[i + 1] ), atof( argv[i + 2] ), err, sizeof( err ) );
+            printf( "move %s %s %s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "rotate" && has( 1 ) )
+        {
+            bool    cw = has( 2 ) && !strcmp( argv[i + 1], "cw" );
+            kp_item it { KP_ITEM_SCH_SYMBOL, findSymbol( b, argv[i] ), -1, 0, -1 };
+            ok = kp_sch_edit_rotate( doc, b, &it, cw ? 0 : 1, err, sizeof( err ) );
+            printf( "rotate %s%s: %s %s\n", argv[i], cw ? " cw" : "", ok ? "ok" : "FAILED", err );
+            i += cw ? 2 : 1;
+        }
+        else if( op == "mirror" && has( 2 ) )
+        {
+            kp_item it { KP_ITEM_SCH_SYMBOL, findSymbol( b, argv[i] ), -1, 0, -1 };
+            ok = kp_sch_edit_mirror( doc, b, &it, !strcmp( argv[i + 1], "x" ) ? 1 : 0, err, sizeof( err ) );
+            printf( "mirror %s %s: %s %s\n", argv[i], argv[i + 1], ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "delete" && has( 1 ) )
+        {
+            kp_item it { KP_ITEM_SCH_SYMBOL, findSymbol( b, argv[i] ), -1, 0, -1 };
+            ok = kp_sch_edit_delete( doc, b, &it, 1, err, sizeof( err ) );
+            printf( "delete %s: %s %s\n", argv[i], ok ? "ok" : "FAILED", err );
+            i += 1;
+        }
+        else if( op == "del" && has( 2 ) )
+        {
+            // del <wire|junction|label|sheet|sheetpin|note|pin|symbol> <index>
+            static const std::pair<const char*, int> kinds[] = {
+                { "wire", KP_ITEM_SCH_WIRE },   { "junction", KP_ITEM_SCH_JUNCTION }, { "label", KP_ITEM_SCH_LABEL },
+                { "sheet", KP_ITEM_SCH_SHEET }, { "sheetpin", KP_ITEM_SCH_SHEET_PIN }, { "note", KP_ITEM_SCH_NOTE },
+                { "pin", KP_ITEM_SCH_PIN },     { "symbol", KP_ITEM_SCH_SYMBOL }
+            };
+            int type = 0;
+
+            for( const auto& k : kinds )
+            {
+                if( !strcmp( argv[i], k.first ) )
+                    type = k.second;
+            }
+
+            kp_item it { type, atoi( argv[i + 1] ), -1, 0, -1 };
+            ok = type && kp_sch_edit_delete( doc, b, &it, 1, err, sizeof( err ) );
+            printf( "del %s #%s: %s %s\n", argv[i], argv[i + 1], ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "field" && has( 3 ) )
+        {
+            // VALUE "=" sets the field to the value it has
+            int         sym = findSymbol( b, argv[i] );
+            std::string value = argv[i + 2];
+
+            if( value == "=" )
+            {
+                for( int f = 0; f < kp_sch_symbol_field_count( b, sym ); ++f )
+                {
+                    if( !strcmp( kp_sch_symbol_field_name( b, sym, f ), argv[i + 1] ) )
+                        value = kp_sch_symbol_field_value( b, sym, f );
+                }
+            }
+
+            ok = kp_sch_edit_set_field( doc, b, sym, argv[i + 1], value.c_str(), err, sizeof( err ) );
+            printf( "field %s %s=%s: %s %s\n", argv[i], argv[i + 1], value.c_str(), ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "wire" || op == "bus" )
+        {
+            std::vector<double> xy;
+
+            while( i < argc && isNumber( argv[i] ) )
+                xy.push_back( atof( argv[i++] ) );
+
+            ok = kp_sch_edit_add_wire( doc, b, xy.data(), (int32_t) xy.size() / 2, op == "bus", err, sizeof( err ) );
+            printf( "%s (%zu points): %s %s\n", op.c_str(), xy.size() / 2, ok ? "ok" : "FAILED", err );
+        }
+        else if( op == "label" && has( 3 ) )
+        {
+            // label X Y TEXT [global|hier] [ANGLE]
+            double x = atof( argv[i] ), y = atof( argv[i + 1] );
+            std::string text = argv[i + 2];
+            int    kind = KP_LABEL_LOCAL;
+            double angle = 0;
+            i += 3;
+
+            if( i < argc && ( !strcmp( argv[i], "global" ) || !strcmp( argv[i], "hier" ) ) )
+                kind = !strcmp( argv[i++], "global" ) ? KP_LABEL_GLOBAL : KP_LABEL_HIERARCHICAL;
+
+            if( i < argc && isNumber( argv[i] ) )
+                angle = atof( argv[i++] );
+
+            ok = kp_sch_edit_add_label( doc, b, x, y, text.c_str(), kind, angle, err, sizeof( err ) );
+            printf( "label %s at %g,%g: %s %s\n", text.c_str(), x, y, ok ? "ok" : "FAILED", err );
+        }
+        else if( ( op == "nc" || op == "junction" ) && has( 2 ) )
+        {
+            double x = atof( argv[i] ), y = atof( argv[i + 1] );
+            ok = op == "nc" ? kp_sch_edit_add_no_connect( doc, b, x, y, err, sizeof( err ) )
+                            : kp_sch_edit_add_junction( doc, b, x, y, err, sizeof( err ) );
+            printf( "%s %g,%g: %s %s\n", op.c_str(), x, y, ok ? "ok" : "FAILED", err );
+            i += 2;
+        }
+        else if( op == "dup" && has( 3 ) )
+        {
+            int sym = findSymbol( b, argv[i] );
+            ok = kp_sch_edit_duplicate( doc, b, sym, atof( argv[i + 1] ), atof( argv[i + 2] ), err, sizeof( err ) );
+            printf( "dup %s %s %s: %s %s\n", argv[i], argv[i + 1], argv[i + 2], ok ? "ok" : "FAILED", err );
+            i += 3;
+        }
+        else if( op == "snap" && has( 3 ) )
+        {
+            double x = 0, y = 0;
+            int    hit = kp_sch_snap( b, atof( argv[i] ), atof( argv[i + 1] ), atof( argv[i + 2] ), &x, &y );
+            printf( "snap %s,%s -> %g,%g%s\n", argv[i], argv[i + 1], x, y, hit ? " (connection)" : "" );
+            ok = 1;
+            i += 3;
+        }
+        else if( op == "stroke" && has( 1 ) )
+        {
+            // stroke RADIUS x0 y0 x1 y1 ...: the wire a pencil stroke gives (no edit)
+            double              radius = atof( argv[i++] );
+            std::vector<double> xy, out( 64 );
+
+            while( i < argc && isNumber( argv[i] ) )
+                xy.push_back( atof( argv[i++] ) );
+
+            int n = kp_sch_wire_from_stroke( b, xy.data(), (int32_t) xy.size() / 2, radius, out.data(), 32 );
+            printf( "stroke ->" );
+
+            for( int k = 0; k < n && k < 32; ++k )
+                printf( " (%g, %g)", out[2 * k], out[2 * k + 1] );
+
+            printf( "\n" );
+            ok = n >= 2;
+        }
+        else if( op == "movewired" && has( 2 ) )
+        {
+            // move the first symbol that has a wire on one of its pins
+            kp_stats st;
+            kp_board_stats( b, &st );
+            int sym = -1;
+
+            for( int p = 0; p < st.pads && sym < 0; ++p )
+            {
+                double  x, y;
+                int32_t s = -1;
+
+                if( kp_sch_pin_point( b, p, &x, &y, &s ) && kp_sch_symbol_field_value( b, s, 0 )[0] != '#'
+                    && ( whatIsAt( b, x, y, s ) & 1 ) )
+                {
+                    sym = s;
+                }
+            }
+
+            kp_item it { KP_ITEM_SCH_SYMBOL, sym, -1, 0, -1 };
+            ok = sym >= 0 && kp_sch_edit_move( doc, b, &it, 1, atof( argv[i] ), atof( argv[i + 1] ), err, sizeof( err ) );
+            printf( "movewired %s: %s %s %s\n", sym >= 0 ? kp_sch_symbol_field_value( b, sym, 0 ) : "-", argv[i],
+                    argv[i + 1], ok ? "ok" : "FAILED" );
+            i += 2;
+        }
+        else if( op == "wirefree" )
+        {
+            // a wire between the two closest free pins of different symbols
+            kp_stats st;
+            kp_board_stats( b, &st );
+            struct Free { int pin, sym; double x, y; };
+            std::vector<Free> free;
+
+            for( int p = 0; p < st.pads && free.size() < 400; ++p )
+            {
+                double  x, y;
+                int32_t s = -1;
+
+                if( kp_sch_pin_point( b, p, &x, &y, &s ) && kp_sch_symbol_field_value( b, s, 0 )[0] != '#'
+                    && whatIsAt( b, x, y, s ) == 0 )
+                {
+                    // pins of the "not connected" type never join anything
+                    kp_item it { KP_ITEM_SCH_PIN, p, s, 0, -1 };
+
+                    if( !strstr( kp_board_item_info( b, &it ), "\tNot connected" ) )
+                        free.push_back( { p, s, x, y } );
+                }
+            }
+
+            int    best[2] = { -1, -1 };
+            double bestD = 1e300;
+
+            for( size_t a = 0; a < free.size(); ++a )
+            {
+                for( size_t c = a + 1; c < free.size(); ++c )
+                {
+                    double d = std::fabs( free[a].x - free[c].x ) + std::fabs( free[a].y - free[c].y );
+
+                    if( free[a].sym != free[c].sym && d > 1.0 && d < bestD )
+                    {
+                        bestD = d;
+                        best[0] = (int) a;
+                        best[1] = (int) c;
+                    }
+                }
+            }
+
+            if( best[0] >= 0 )
+            {
+                const Free& A = free[(size_t) best[0]];
+                const Free& B = free[(size_t) best[1]];
+                double      xy[] = { A.x, A.y, B.x, A.y, B.x, B.y };
+                ok = kp_sch_edit_add_wire( doc, b, xy, 3, 0, err, sizeof( err ) );
+                printf( "wirefree %s %s: %s %s\n", pinName( b, A.pin, A.sym ).c_str(), pinName( b, B.pin, B.sym ).c_str(),
+                        ok ? "ok" : "FAILED", err );
+            }
+            else
+            {
+                printf( "wirefree: no free pins\n" );
+            }
+        }
+        else if( op == "labelwire" && has( 1 ) )
+        {
+            // a label in the middle of the first horizontal or vertical wire
+            ok = 0;
+
+            for( int w = 0; w < 100000 && !ok; ++w )
+            {
+                kp_item it { KP_ITEM_SCH_WIRE, w, -1, 0, -1 };
+                double  x0, y0, x1, y1;
+
+                if( !kp_board_item_bounds( b, &it, 0, &x0, &y0, &x1, &y1 ) )
+                    break;
+
+                std::string info = kp_board_item_info( b, &it );
+
+                if( info.rfind( "Wire", 0 ) != 0 )
+                    continue;
+
+                double cx = ( x0 + x1 ) / 2, cy = ( y0 + y1 ) / 2;
+                bool   horiz = x1 - x0 > 5.0 && y1 - y0 < 1.0, vert = y1 - y0 > 5.0 && x1 - x0 < 1.0;
+
+                if( !horiz && !vert )
+                    continue;
+
+                // on the wire's axis, on the grid
+                double gx = horiz ? std::round( cx / 1.27 ) * 1.27 : cx;
+                double gy = vert ? std::round( cy / 1.27 ) * 1.27 : cy;
+
+                if( std::fabs( gx - std::round( gx / 1.27 ) * 1.27 ) > 1e-3 || std::fabs( gy - std::round( gy / 1.27 ) * 1.27 ) > 1e-3 )
+                    continue;
+
+                ok = kp_sch_edit_add_label( doc, b, gx, gy, argv[i], KP_LABEL_LOCAL, vert ? 90 : 0, err, sizeof( err ) );
+                printf( "labelwire %s at %g,%g (wire %d): %s %s\n", argv[i], gx, gy, w, ok ? "ok" : "FAILED", err );
+            }
+
+            if( !ok )
+                printf( "labelwire: no wire\n" );
+
+            i += 1;
+        }
+        else if( op == "undo" )
+        {
+            ok = kp_sch_doc_undo( doc );
+            printf( "undo: %s\n", ok ? "ok" : "nothing to undo" );
+        }
+        else if( op == "redo" )
+        {
+            ok = kp_sch_doc_redo( doc );
+            printf( "redo: %s\n", ok ? "ok" : "nothing to redo" );
+        }
+        else if( op == "save" && has( 1 ) )
+        {
+            // save SUBDIR: write the files as they are now into out-dir/SUBDIR
+            std::error_code ec;
+
+            for( int f = 0; f < kp_sch_doc_file_count( doc ); ++f )
+            {
+                fs::path    out = outDir / argv[i] / kp_sch_doc_file_name( doc, f );
+                size_t      len = 0;
+                const char* text = kp_sch_doc_file_text( doc, f, &len );
+                fs::create_directories( out.parent_path(), ec );
+                std::ofstream o( out, std::ios::binary );
+                o.write( text, (std::streamsize) len );
+            }
+
+            printf( "save %s\n", argv[i] );
+            ok = 1;
+            i += 1;
+        }
+        else
+        {
+            fprintf( stderr, "bad op %s\n", op.c_str() );
+            return 2;
+        }
+
+        failures += !ok;
+
+        // rebuild the sheet from the edited document, as the app does
+        kp_board* nb = kp_board_load_sch_doc( doc, sheet, err, sizeof( err ) );
+
+        if( !nb )
+        {
+            fprintf( stderr, "rebuild failed: %s\n", err );
+            return 1;
+        }
+
+        kp_board_free( b );
+        b = nb;
+    }
+
+    std::error_code ec;
+
+    for( int f = 0; f < kp_sch_doc_file_count( doc ); ++f )
+    {
+        fs::path    out = outDir / kp_sch_doc_file_name( doc, f );
+        size_t      len = 0;
+        const char* text = kp_sch_doc_file_text( doc, f, &len );
+        fs::create_directories( out.parent_path(), ec );
+        std::ofstream o( out, std::ios::binary );
+        o.write( text, (std::streamsize) len );
+        printf( "wrote %s (%zu bytes%s)\n", out.string().c_str(), len, kp_sch_doc_file_modified( doc, f ) ? ", modified" : "" );
+    }
+
+    printf( "undo: %s\n", kp_sch_doc_can_undo( doc ) ? kp_sch_doc_undo_label( doc ) : "-" );
+    kp_board_free( b );
+    kp_sch_doc_free( doc );
+    return failures ? 3 : 0;
+}
+
+
 /// KPCLI_STRINGS=path/to/Core.strings: use that translation table (like the app does).
 static void loadTranslations()
 {
@@ -1185,6 +1629,9 @@ int main( int argc, char** argv )
     if( argc >= 4 && !strcmp( argv[1], "edit" ) )
         return cmdEdit( argc - 2, argv + 2 );
 
+    if( argc >= 4 && !strcmp( argv[1], "schedit" ) )
+        return cmdSchEdit( argc - 2, argv + 2 );
+
     if( argc >= 4 && !strcmp( argv[1], "fab" ) )
         return cmdFab( argc - 2, argv + 2 );
 
@@ -1228,6 +1675,11 @@ int main( int argc, char** argv )
                      "  kpcli render <file> <out.png> [width] [--back] [--view x0 y0 x1 y1] [--pick x y] [--net] [--no-labels]\n"
                      "  kpcli edit <in> <out> ops... (move REF DX DY | rotate REF DEG | delete REF | field REF NAME VALUE |\n"
                      "             width TRACK W | via VIA SIZE DRILL | del KIND INDEX | track X1 Y1 X2 Y2 W LAYER NET |\n"
-                     "             addvia X Y SIZE DRILL NET | undo | redo)\n" );
+                     "             addvia X Y SIZE DRILL NET | undo | redo)\n"
+                     "  kpcli schedit <in.kicad_sch> <out-dir> ops... (move REF DX DY | rotate REF [cw] | mirror REF x|y |\n"
+                     "             delete REF | del KIND INDEX | field REF NAME VALUE|= | wire X1 Y1 X2 Y2... | bus ... |\n"
+                     "             label X Y TEXT [global|hier] [ANGLE] | nc X Y | junction X Y | dup REF DX DY |\n"
+                     "             snap X Y R | stroke R X0 Y0... | movewired DX DY | wirefree | labelwire TEXT |\n"
+                     "             --sheet N | undo | redo)\n" );
     return 2;
 }
