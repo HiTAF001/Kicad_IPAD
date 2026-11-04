@@ -8,3 +8,6 @@ xcuserdata/
 .DS_Store
 # desktop build of the core
 /build-*/
+
+# Claude Code agent worktrees
+.claude/worktrees/
